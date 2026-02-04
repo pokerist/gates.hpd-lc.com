@@ -70,6 +70,14 @@ def block_person(id_number, reason="Administrative decision"):
     conn.commit()
     conn.close()
 
+def unblock_person(id_number):
+    """Unblock a person."""
+    conn = get_db_connection()
+    conn.execute('UPDATE persons SET is_blocked = 0, block_reason = NULL WHERE id_number = ?', 
+                 (id_number,))
+    conn.commit()
+    conn.close()
+
 def get_all_persons():
     """Get all persons."""
     conn = get_db_connection()

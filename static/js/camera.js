@@ -13,14 +13,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Scan button
     document.getElementById('btn-scan').addEventListener('click', startCamera);
 
-    // Upload button
-    document.getElementById('btn-upload').addEventListener('click', function() {
-        document.getElementById('file-input').click();
-    });
-
-    // File input change
-    document.getElementById('file-input').addEventListener('change', handleFileUpload);
-
     // Capture button
     document.getElementById('btn-capture').addEventListener('click', captureImage);
 
@@ -47,7 +39,7 @@ async function startCamera() {
 
     } catch (error) {
         console.error('Error accessing camera:', error);
-        showToast('❌ Could not access camera. Please check permissions.', 'error');
+        showToast('❌ لا يمكن الوصول للكاميرا. تحقق من الأذونات.', 'error');
     }
 }
 
@@ -60,59 +52,6 @@ function stopCamera() {
     // Hide camera container, show scan button
     document.getElementById('camera-container').style.display = 'none';
     document.getElementById('scan-button-container').style.display = 'block';
-}
-
-async function handleFileUpload(event) {
-    const file = event.target.files[0];
-    
-    if (!file) {
-        return;
-    }
-
-    // Validate file type
-    if (!file.type.startsWith('image/')) {
-        showToast('❌ Please select a valid image file.', 'error');
-        return;
-    }
-
-    // Show loading
-    document.getElementById('loading-container').classList.remove('d-none');
-    document.getElementById('scan-button-container').style.display = 'none';
-
-    try {
-        // Read file as base64
-        const reader = new FileReader();
-        
-        reader.onload = async function(e) {
-            const imageBase64 = e.target.result;
-            
-            // Send to backend for verification
-            await verifyID(imageBase64);
-            
-            // Hide loading and show buttons again
-            document.getElementById('loading-container').classList.add('d-none');
-            document.getElementById('scan-button-container').style.display = 'block';
-            
-            // Reset file input
-            event.target.value = '';
-        };
-        
-        reader.onerror = function() {
-            showToast('❌ Error reading image file. Please try again.', 'error');
-            document.getElementById('loading-container').classList.add('d-none');
-            document.getElementById('scan-button-container').style.display = 'block';
-            event.target.value = '';
-        };
-        
-        reader.readAsDataURL(file);
-        
-    } catch (error) {
-        console.error('Error processing file:', error);
-        showToast('❌ Error processing image. Please try again.', 'error');
-        document.getElementById('loading-container').classList.add('d-none');
-        document.getElementById('scan-button-container').style.display = 'block';
-        event.target.value = '';
-    }
 }
 
 async function captureImage() {
@@ -168,7 +107,7 @@ async function verifyID(imageBase64) {
 
     } catch (error) {
         console.error('Error verifying ID:', error);
-        showToast('❌ Error processing ID card. Please try again.', 'error');
+        showToast('❌ خطأ في معالجة البطاقة. حاول مرة أخرى.', 'error');
     }
 }
 
@@ -196,7 +135,7 @@ function showToast(message, type) {
 
 function showBlockedModal(person) {
     document.getElementById('blocked-name').textContent = person.name;
-    document.getElementById('blocked-id').textContent = `ID: ${person.id_number.substring(0, 4)}...`;
+    document.getElementById('blocked-id').textContent = `رقم البطاقة: ${person.id_number.substring(0, 4)}...`;
     document.getElementById('blocked-reason').textContent = person.block_reason;
 
     const modal = new bootstrap.Modal(document.getElementById('blockedModal'));
