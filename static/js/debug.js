@@ -10,6 +10,68 @@ let currentStream = null;
 let facingMode = "environment";
 let imageCapture = null;
 
+async function getStreamWithFallback(primary, fallback) {
+  try {
+    return await navigator.mediaDevices.getUserMedia({ video: primary });
+  } catch (err) {
+    console.warn("Primary constraints failed, fallback.", err);
+    return await navigator.mediaDevices.getUserMedia({ video: fallback });
+  }
+}
+
+async function cropBlobToAspect(blob, targetAspect, mime = "image/jpeg", quality = 0.98) {
+  try {
+    let source;
+    if ("createImageBitmap" in window) {
+      source = await createImageBitmap(blob);
+    } else {
+      source = await new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(blob);
+        img.onload = () => {
+          URL.revokeObjectURL(url);
+          resolve(img);
+        };
+        img.onerror = reject;
+        img.src = url;
+      });
+    }
+
+    const iw = source.width;
+    const ih = source.height;
+    let sw = iw;
+    let sh = ih;
+    let sx = 0;
+    let sy = 0;
+
+    if (iw / ih > targetAspect) {
+      sh = ih;
+      sw = Math.floor(ih * targetAspect);
+      sx = Math.floor((iw - sw) / 2);
+    } else {
+      sw = iw;
+      sh = Math.floor(iw / targetAspect);
+      sy = Math.floor((ih - sh) / 2);
+    }
+
+    canvas.width = sw;
+    canvas.height = sh;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+
+    if (source.close) {
+      source.close();
+    }
+
+    return await new Promise(resolve => {
+      canvas.toBlob(result => resolve(result || blob), mime, quality);
+    });
+  } catch (err) {
+    console.warn("Crop failed, using original blob.", err);
+    return blob;
+  }
+}
+
 async function startCamera() {
   if (currentStream) {
     currentStream.getTracks().forEach(track => track.stop());
@@ -19,22 +81,35 @@ async function startCamera() {
       ? navigator.mediaDevices.getSupportedConstraints()
       : {};
 
-    const videoConstraints = {
-      facingMode,
+    const facingConstraint = supported.facingMode ? { ideal: facingMode } : facingMode;
+
+    const highConstraints = {
+      facingMode: facingConstraint,
+      width: { ideal: 4096 },
+      height: { ideal: 2160 },
+      aspectRatio: { ideal: 1.7777777778 },
+      frameRate: { ideal: 30, max: 60 }
+    };
+
+    const fallbackConstraints = {
+      facingMode: facingConstraint,
       width: { ideal: 1920 },
       height: { ideal: 1080 },
-      aspectRatio: { ideal: 1.7777777778 }
+      aspectRatio: { ideal: 1.7777777778 },
+      frameRate: { ideal: 30 }
     };
 
     if (supported.focusMode || supported.exposureMode || supported.whiteBalanceMode) {
-      videoConstraints.advanced = [
+      const advanced = [
         supported.focusMode ? { focusMode: "continuous" } : {},
         supported.exposureMode ? { exposureMode: "continuous" } : {},
         supported.whiteBalanceMode ? { whiteBalanceMode: "continuous" } : {}
       ];
+      highConstraints.advanced = advanced;
+      fallbackConstraints.advanced = advanced;
     }
 
-    currentStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
+    currentStream = await getStreamWithFallback(highConstraints, fallbackConstraints);
     video.srcObject = currentStream;
 
     const track = currentStream.getVideoTracks()[0];
@@ -42,6 +117,35 @@ async function startCamera() {
       imageCapture = new ImageCapture(track);
     } else {
       imageCapture = null;
+    }
+
+    if (track && track.getCapabilities && track.applyConstraints) {
+      const caps = track.getCapabilities();
+      const maxWidth = caps.width?.max || caps.imageWidth?.max;
+      const maxHeight = caps.height?.max || caps.imageHeight?.max;
+      const advanced = [];
+      if (maxWidth && maxHeight) {
+        advanced.push({ width: maxWidth, height: maxHeight });
+      }
+      if (caps.focusMode?.includes("continuous")) {
+        advanced.push({ focusMode: "continuous" });
+      }
+      if (caps.exposureMode?.includes("continuous")) {
+        advanced.push({ exposureMode: "continuous" });
+      }
+      if (caps.whiteBalanceMode?.includes("continuous")) {
+        advanced.push({ whiteBalanceMode: "continuous" });
+      }
+      if (advanced.length) {
+        try {
+          await track.applyConstraints({ advanced });
+        } catch (err) {
+          console.warn("applyConstraints failed.", err);
+        }
+      }
+      if (track.getSettings) {
+        console.log("[Camera] settings", track.getSettings());
+      }
     }
   } catch (err) {
     console.error(err);
@@ -54,10 +158,10 @@ async function captureFrame() {
     try {
       const track = currentStream.getVideoTracks()[0];
       const caps = track.getCapabilities ? track.getCapabilities() : {};
-      const imageWidth = caps.imageWidth?.max || caps.width?.max || 1920;
-      const imageHeight = caps.imageHeight?.max || caps.height?.max || 1080;
+      const imageWidth = caps.imageWidth?.max || caps.width?.max || 4096;
+      const imageHeight = caps.imageHeight?.max || caps.height?.max || 2160;
       const blob = await imageCapture.takePhoto({ imageWidth, imageHeight });
-      return blob;
+      return await cropBlobToAspect(blob, 1.58, "image/jpeg", 0.98);
     } catch (err) {
       console.warn("ImageCapture failed, fallback to canvas.", err);
     }
@@ -92,7 +196,7 @@ async function captureFrame() {
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
 
   return new Promise(resolve => {
-    canvas.toBlob(blob => resolve(blob), "image/jpeg", 0.95);
+    canvas.toBlob(blob => resolve(blob), "image/jpeg", 0.98);
   });
 }
 
