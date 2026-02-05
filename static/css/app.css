@@ -56,30 +56,20 @@ header {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
 }
 
 .brand h1 {
-  font-size: 1.9rem;
+  font-size: 2rem;
   font-weight: 700;
   letter-spacing: 0.4px;
 }
 
-.brand span {
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-.brand-mark {
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  padding: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.brand-logo {
+  width: 184px;
+  height: 184px;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
 }
 
 .brand-text {
