@@ -28,4 +28,5 @@ python -m pip install -r "$ROOT/requirements.txt"
 mkdir -p "$ROOT/data" "$ROOT/data/debug"
 
 echo "[4/4] تشغيل السيرفر على بورت 5000..."
+export TESSDATA_PREFIX="$ROOT/tessdata"
 exec uvicorn app:app --host 0.0.0.0 --port 5000

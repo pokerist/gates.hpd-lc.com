@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ import easyocr
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = BASE_DIR / "models"
 DEBUG_DIR = BASE_DIR / "data" / "debug"
+TESSDATA_DIR = BASE_DIR / "tessdata"
 
 ID_CARD_MODEL_PATH = MODEL_DIR / "detect_id_card.pt"
 FIELD_MODEL_PATH = MODEL_DIR / "detect_odjects.pt"
@@ -49,6 +51,24 @@ def _ensure_models() -> None:
 
     if _digits_model is None:
         _digits_model = YOLO(str(DIGITS_MODEL_PATH))
+
+    if TESSDATA_DIR.exists():
+        os.environ["TESSDATA_PREFIX"] = str(TESSDATA_DIR)
+
+
+def _tessdata_exists(lang: str) -> bool:
+    return (TESSDATA_DIR / f"{lang}.traineddata").exists()
+
+
+def _tess_lang(lang: str) -> str:
+    return lang if _tessdata_exists(lang) else "ara"
+
+
+def _tess_config(base_config: str = "") -> str:
+    if TESSDATA_DIR.exists():
+        extra = f"--tessdata-dir {TESSDATA_DIR}"
+        return f"{base_config} {extra}".strip()
+    return base_config
 
 
 def _decode_image(image_bytes: bytes) -> np.ndarray:
@@ -98,9 +118,15 @@ def _easyocr_text(image: np.ndarray) -> str:
 
 def _tesseract_text(image: np.ndarray, lang: str, config: str = "") -> str:
     try:
-        return pytesseract.image_to_string(image, lang=lang, config=config).strip()
+        return pytesseract.image_to_string(image, lang=lang, config=_tess_config(config)).strip()
     except Exception:
         return ""
+
+
+def _prep_for_tesseract(image: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return binary
 
 
 def _detect_card_bbox(image: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
@@ -224,15 +250,17 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
     if nid_field:
         nid_crop = _crop(card_image, nid_field["bbox"])
         nid_text = _detect_digits(nid_crop)
+        tess_nid_lang = _tess_lang("ara_number")
         tesseract_nid_text = _tesseract_text(
-            nid_crop,
-            lang="ara+eng",
+            _prep_for_tesseract(nid_crop),
+            lang=tess_nid_lang,
             config="--psm 7 -c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩",
         )
     else:
+        tess_nid_lang = _tess_lang("ara_number")
         tesseract_nid_text = _tesseract_text(
-            card_image,
-            lang="ara+eng",
+            _prep_for_tesseract(card_image),
+            lang=tess_nid_lang,
             config="--psm 6 -c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩",
         )
 
@@ -244,7 +272,8 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
     if len(nid_text) != 14 and len(tesseract_nid_text) == 14:
         nid_text = tesseract_nid_text
 
-    tesseract_full_name = _tesseract_text(card_image, lang="ara", config="--psm 6")
+    tess_name_lang = _tess_lang("ara_combined")
+    tesseract_full_name = _tesseract_text(_prep_for_tesseract(card_image), lang=tess_name_lang, config="--psm 6")
     full_name = easyocr_name_raw
     if not full_name:
         full_name = tesseract_full_name.strip()
