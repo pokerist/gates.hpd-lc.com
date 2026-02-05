@@ -1,388 +1,574 @@
 import os
-import re
-import json
-import base64
-import requests
+import uuid
+import numpy as np
+import cv2
+from flask import Flask, render_template, request, jsonify
+from PIL import Image
+from ultralytics import YOLO
+import easyocr
+import pytesseract
+import logging
 from datetime import datetime
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
-from werkzeug.middleware.proxy_fix import ProxyFix
-from database import (
-    init_db, get_person, create_person, create_entry, 
-    block_person, unblock_person, get_all_persons, get_all_entries
-)
+from models import db, Person, Entry
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'hyde_park_secret_key_2026_production')
+app.config['UPLOAD_FOLDER'] = 'uploads'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///gates_hyde_park.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Support for reverse proxy with URL prefix
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+# Initialize database
+db.init_app(app)
 
-# Configuration
-APP_PREFIX = os.environ.get('APP_PREFIX', '/new')  # URL prefix for reverse proxy
-PASSWORD = os.environ.get('GATE_PASSWORD', 'Smart@1150')
-OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '')
-OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
-VISION_MODEL = 'qwen/qwen-vl-plus'
-CAPTURES_DIR = 'static/captures'
-DEBUG_MODE = os.environ.get('DEBUG', 'False').lower() == 'true'
+# Ensure upload directory exists
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
-# Ensure captures directory exists
-os.makedirs(CAPTURES_DIR, exist_ok=True)
+# Color scheme for different regions
+COLORS = {
+    'id_card': (255, 0, 0),      # Blue for ID card outline
+    'firstName': (0, 255, 0),    # Green for first name
+    'lastName': (0, 255, 255),   # Yellow for last name
+    'address': (255, 255, 0),    # Orange for address
+    'serial': (255, 0, 255),     # Purple for serial
+    'nid': (0, 0, 255),          # Red for national ID
+    'digit': (128, 128, 128)     # Gray for individual digits
+}
 
-# Logging helper
-def log(message):
-    """Print log with timestamp"""
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[{timestamp}] {message}")
-
-def extract_id_from_image(image_base64):
-    """
-    Extract Egyptian National ID information using OpenRouter Vision LLM.
-    Returns dict with 'name' and 'id_number' keys.
-    """
-    log("=" * 80)
-    log("🔍 بدء عملية استخراج البيانات من البطاقة")
-    log("=" * 80)
+class IDCardProcessor:
+    def __init__(self):
+        self.models = {}
+        self.ocr_reader = None
+        self.load_models()
+        self.load_ocr()
     
-    if not OPENROUTER_API_KEY:
-        log("❌ خطأ: OPENROUTER_API_KEY غير موجود!")
-        log("   يرجى تعيين المفتاح باستخدام: export OPENROUTER_API_KEY='your-key'")
-        return {"id_number": "NOT_FOUND", "name": ""}
+    def load_models(self):
+        """Load all YOLO models once at startup"""
+        try:
+            logger.info("Loading YOLO models...")
+            self.models['id_card'] = YOLO('yolo/detect_id_card.pt')
+            self.models['fields'] = YOLO('yolo/detect_odjects.pt')
+            logger.info("All models loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading models: {e}")
+            raise
     
-    log(f"✅ API Key موجود: {OPENROUTER_API_KEY[:20]}...")
-    log(f"🤖 Model المستخدم: {VISION_MODEL}")
-    log(f"🌐 Endpoint: {OPENROUTER_ENDPOINT}")
+    def load_ocr(self):
+        """Load OCR engines"""
+        try:
+            logger.info("Loading OCR engines...")
+            # Initialize EasyOCR for Arabic text
+            self.ocr_reader = easyocr.Reader(['ar'])
+            logger.info("OCR engines loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading OCR: {e}")
+            raise
     
-    # Prepare the prompt
-    prompt = """You are reading an Egyptian National ID card.
-Extract:
-- Full name
-- 14-digit national ID number
-
-Return JSON only: { "name": "", "id_number": "" }
-If the ID is unreadable, return { "id_number": "NOT_FOUND" }"""
-    
-    log("📝 Prompt المرسل للـ Vision Model:")
-    log(f"   {prompt[:100]}...")
-    
-    # Prepare the request payload
-    payload = {
-        "model": VISION_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_base64[:50]}..."
-                        }
-                    }
-                ]
-            }
-        ],
-        "temperature": 0.1,
-        "max_tokens": 200
-    }
-    
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    log(f"📤 إرسال الطلب إلى OpenRouter...")
-    log(f"   Temperature: {payload['temperature']}")
-    log(f"   Max Tokens: {payload['max_tokens']}")
-    
-    try:
-        response = requests.post(OPENROUTER_ENDPOINT, json=payload, headers=headers, timeout=30)
+    def draw_bounding_box(self, image, box, label, color, thickness=2):
+        """Draw a bounding box with label on the image"""
+        x1, y1, x2, y2 = map(int, box)
         
-        log(f"📥 استلام الرد من OpenRouter")
-        log(f"   Status Code: {response.status_code}")
+        # Draw rectangle
+        cv2.rectangle(image, (x1, y1), (x2, y2), color, thickness)
         
-        response.raise_for_status()
+        # Draw label background
+        label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+        cv2.rectangle(image, (x1, y1 - 20), (x1 + label_size[0], y1), color, -1)
         
-        result = response.json()
-        log(f"✅ الرد الكامل من الـ Model:")
-        log(f"   {json.dumps(result, indent=2, ensure_ascii=False)}")
+        # Draw label text
+        cv2.putText(image, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 
+                   0.6, (255, 255, 255), 2)
         
-        content = result['choices'][0]['message']['content']
-        log(f"📄 المحتوى المستخرج: {content}")
-        
-        # Try to parse JSON from the response
-        json_match = re.search(r'\{[^}]+\}', content)
-        if json_match:
-            data = json.loads(json_match.group())
-            log(f"🔍 JSON المستخرج: {data}")
+        return image
+    
+    def enhance_image(self, image):
+        """Enhance image by correcting skew and rotation"""
+        try:
+            # Convert to grayscale for skew detection
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             
-            # Validate ID number format (14 digits)
-            id_number = data.get('id_number', 'NOT_FOUND')
-            name = data.get('name', '').strip()
+            # Apply Gaussian blur to reduce noise
+            gray = cv2.GaussianBlur(gray, (5, 5), 0)
             
-            log(f"👤 الاسم: {name}")
-            log(f"🆔 رقم البطاقة: {id_number}")
+            # Use Canny edge detection
+            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
             
-            if id_number and re.match(r'^\d{14}$', id_number):
-                log("✅ رقم البطاقة صحيح (14 رقم)")
-                log("=" * 80)
-                return {
-                    "name": name,
-                    "id_number": id_number
-                }
+            # Detect lines using Hough Transform
+            lines = cv2.HoughLines(edges, 1, np.pi / 180, 100)
+            
+            if lines is not None:
+                angles = []
+                for line in lines[:10]:  # Check first 10 lines
+                    rho, theta = line[0]
+                    angle = np.degrees(theta)
+                    
+                    # Normalize angle to -45 to 45 degrees
+                    if angle > 45:
+                        angle -= 90
+                    elif angle < -45:
+                        angle += 90
+                    
+                    angles.append(angle)
+                
+                if angles:
+                    # Calculate median angle for more robust estimation
+                    median_angle = np.median(angles)
+                    
+                    # Only rotate if angle is significant (greater than 1 degree)
+                    if abs(median_angle) > 1.0:
+                        # Rotate image to correct skew
+                        (h, w) = image.shape[:2]
+                        center = (w // 2, h // 2)
+                        M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
+                        rotated = cv2.warpAffine(image, M, (w, h), 
+                                               flags=cv2.INTER_CUBIC, 
+                                               borderMode=cv2.BORDER_REPLICATE)
+                        return rotated
+            
+            # If no significant skew detected, return original image
+            return image
+            
+        except Exception as e:
+            logger.warning(f"Image enhancement failed: {e}")
+            return image
+    
+    def preprocess_for_ocr(self, image):
+        """Preprocess image for better OCR accuracy"""
+        try:
+            # Convert to grayscale if color
+            if len(image.shape) == 3:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
             else:
-                log(f"❌ رقم البطاقة غير صحيح: {id_number}")
-                log("   يجب أن يكون 14 رقم بالضبط")
-                log("=" * 80)
-                return {"id_number": "NOT_FOUND", "name": ""}
-        else:
-            log("❌ لم يتم العثور على JSON في الرد")
-            log("=" * 80)
-            return {"id_number": "NOT_FOUND", "name": ""}
+                gray = image.copy()
             
-    except requests.exceptions.HTTPError as e:
-        log(f"❌ خطأ HTTP من OpenRouter: {e}")
-        log(f"   Response: {e.response.text if hasattr(e, 'response') else 'No response'}")
-        log("=" * 80)
-        return {"id_number": "NOT_FOUND", "name": ""}
-    except Exception as e:
-        log(f"❌ خطأ عام: {type(e).__name__}: {e}")
-        log("=" * 80)
-        return {"id_number": "NOT_FOUND", "name": ""}
+            # Apply Gaussian blur to reduce noise
+            gray = cv2.GaussianBlur(gray, (3, 3), 0)
+            
+            # Apply threshold to create binary image
+            _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            # Optional: Apply morphological operations to enhance text
+            kernel = np.ones((2,2), np.uint8)
+            binary = cv2.dilate(binary, kernel, iterations=1)
+            binary = cv2.erode(binary, kernel, iterations=1)
+            
+            return binary
+            
+        except Exception as e:
+            logger.warning(f"OCR preprocessing failed: {e}")
+            return image
+    
+    def extract_text_easyocr(self, image):
+        """Extract text using EasyOCR"""
+        try:
+            # Preprocess image for better OCR
+            processed_image = self.preprocess_for_ocr(image)
+            
+            # Extract text
+            results = self.ocr_reader.readtext(processed_image)
+            
+            if results:
+                # Get the most confident result
+                text = results[0][1]
+                confidence = results[0][2]
+                return text.strip(), confidence
+            else:
+                return "", 0.0
+                
+        except Exception as e:
+            logger.warning(f"EasyOCR extraction failed: {e}")
+            return "", 0.0
+    
+    def extract_text_tesseract(self, image):
+        """Extract text using Tesseract (for digits)"""
+        try:
+            # Preprocess image for better OCR
+            processed_image = self.preprocess_for_ocr(image)
+            
+            # Configure Tesseract for Arabic digits using ara_number model
+            config = '--psm 6 --oem 3 -l ara_number'
+            
+            # Extract text
+            text = pytesseract.image_to_string(processed_image, config=config)
+            return text.strip()
+            
+        except Exception as e:
+            logger.warning(f"Tesseract extraction failed: {e}")
+            return ""
 
-def save_image(image_base64):
-    """Save captured image to disk."""
-    try:
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"{timestamp}.jpg"
-        filepath = os.path.join(CAPTURES_DIR, filename)
-        
-        # Decode and save
-        image_data = base64.b64decode(image_base64)
-        with open(filepath, 'wb') as f:
-            f.write(image_data)
-        
-        log(f"💾 تم حفظ الصورة: {filepath}")
-        return filename
-    except Exception as e:
-        log(f"❌ خطأ في حفظ الصورة: {e}")
-        return None
+    def process_image(self, image_path):
+        """Main processing pipeline"""
+        try:
+            # Load original image
+            original_image = cv2.imread(image_path)
+            if original_image is None:
+                raise ValueError("Could not load image")
+            
+            # Enhance image by correcting skew and rotation
+            enhanced_image = self.enhance_image(original_image)
+            
+            # Create copy for visualization
+            result_image = enhanced_image.copy()
+            detections = []
+            
+            # Stage 1: Detect ID card
+            logger.info("Stage 1: Detecting ID card...")
+            id_card_results = self.models['id_card'](original_image, conf=0.5)
+            
+            if not id_card_results[0].boxes:
+                return result_image, detections, "No ID card detected in the image"
+            
+            # Get the most confident ID card detection
+            id_card_box = id_card_results[0].boxes.xyxy[0].cpu().numpy()
+            x1, y1, x2, y2 = map(int, id_card_box)
+            
+            # Draw ID card bounding box
+            result_image = self.draw_bounding_box(
+                result_image, id_card_box, "ID Card", COLORS['id_card'], 3
+            )
+            
+            # Crop the ID card for further processing
+            cropped_id = original_image[y1:y2, x1:x2]
+            
+            # Stage 2: Detect fields on cropped ID card
+            logger.info("Stage 2: Detecting fields...")
+            field_results = self.models['fields'](cropped_id, conf=0.5)
+            
+            if field_results[0].boxes:
+                for box, cls in zip(field_results[0].boxes.xyxy, field_results[0].boxes.cls):
+                    field_box = box.cpu().numpy()
+                    class_id = int(cls.cpu().numpy())
+                    class_name = field_results[0].names[class_id]
+                    
+                    # Adjust coordinates to original image space
+                    adjusted_box = [
+                        field_box[0] + x1,  # x1
+                        field_box[1] + y1,  # y1
+                        field_box[2] + x1,  # x2
+                        field_box[3] + y1   # y2
+                    ]
+                    
+                    detections.append({
+                        'type': 'field',
+                        'name': class_name,
+                        'box': adjusted_box
+                    })
+                    
+                    # Only draw bounding boxes for firstName, lastName, and nid
+                    if class_name in ['firstName', 'lastName', 'nid']:
+                        result_image = self.draw_bounding_box(
+                            result_image, adjusted_box, class_name, COLORS.get(class_name, COLORS['digit'])
+                        )
+                    
+                    # Stage 3: Extract text from fields using OCR
+                    if class_name in ['firstName', 'lastName']:
+                        logger.info(f"Stage 3: Extracting {class_name} text...")
+                        field_cropped = cropped_id[
+                            int(field_box[1]):int(field_box[3]),
+                            int(field_box[0]):int(field_box[2])
+                        ]
+                        
+                        # Extract text using EasyOCR
+                        extracted_text, confidence = self.extract_text_easyocr(field_cropped)
+                        
+                        if extracted_text:
+                            detections.append({
+                                'type': 'extracted_text',
+                                'name': class_name,
+                                'text': extracted_text,
+                                'confidence': confidence
+                            })
+                    
+                    elif class_name == 'nid':
+                        logger.info("Stage 3: Extracting national ID text...")
+                        nid_cropped = cropped_id[
+                            int(field_box[1]):int(field_box[3]),
+                            int(field_box[0]):int(field_box[2])
+                        ]
+                        
+                        # Extract text using Tesseract for digits
+                        extracted_id = self.extract_text_tesseract(nid_cropped)
+                        
+                        if extracted_id:
+                            detections.append({
+                                'type': 'extracted_text',
+                                'name': 'national_id',
+                                'text': extracted_id,
+                                'confidence': 1.0  # Tesseract doesn't provide confidence easily
+                            })
+            
+            return result_image, detections, "Processing completed successfully"
+            
+        except Exception as e:
+            logger.error(f"Error processing image: {e}")
+            return original_image, [], f"Error processing image: {str(e)}"
+
+# Initialize processor
+processor = IDCardProcessor()
 
 @app.route('/')
-def home():
-    """Home page with Security/Admin buttons."""
-    log("🏠 الصفحة الرئيسية")
-    return render_template('home.html')
+def index():
+    return render_template('index.html')
 
 @app.route('/security')
 def security():
-    """Security screen with ID card scanner."""
-    if not session.get('security_logged_in'):
-        return redirect(url_for('security_login'))
-    log("🔒 صفحة الأمن")
     return render_template('security.html')
-
-@app.route('/security/login', methods=['GET', 'POST'])
-def security_login():
-    """Security login page."""
-    if request.method == 'POST':
-        password = request.form.get('password')
-        if password == PASSWORD:
-            session['security_logged_in'] = True
-            log("✅ تسجيل دخول ناجح - Security")
-            return redirect(url_for('security'))
-        else:
-            log("❌ محاولة تسجيل دخول فاشلة - Security")
-            return render_template('login.html', error=True, page='Security', target='security_login')
-    return render_template('login.html', page='Security', target='security_login')
-
-@app.route('/security/logout')
-def security_logout():
-    """Security logout."""
-    session.pop('security_logged_in', None)
-    log("🚪 تسجيل خروج - Security")
-    return redirect(url_for('home'))
 
 @app.route('/admin')
 def admin():
-    """Admin screen with persons and entries management."""
-    if not session.get('admin_logged_in'):
-        return redirect(url_for('admin_login'))
-    log("⚙️ صفحة الإدارة")
-    persons = get_all_persons()
-    entries = get_all_entries()
-    log(f"   عدد الأشخاص: {len(persons)}")
-    log(f"   عدد السجلات: {len(entries)}")
-    return render_template('admin.html', persons=persons, entries=entries)
+    return render_template('admin.html')
 
-@app.route('/admin/login', methods=['GET', 'POST'])
-def admin_login():
-    """Admin login page."""
-    if request.method == 'POST':
-        password = request.form.get('password')
-        if password == PASSWORD:
-            session['admin_logged_in'] = True
-            log("✅ تسجيل دخول ناجح - Admin")
-            return redirect(url_for('admin'))
-        else:
-            log("❌ محاولة تسجيل دخول فاشلة - Admin")
-            return render_template('login.html', error=True, page='Admin', target='admin_login')
-    return render_template('login.html', page='Admin', target='admin_login')
-
-@app.route('/admin/logout')
-def admin_logout():
-    """Admin logout."""
-    session.pop('admin_logged_in', None)
-    log("🚪 تسجيل خروج - Admin")
-    return redirect(url_for('home'))
-
-@app.route('/verify', methods=['POST'])
-def verify():
-    """
-    Verify ID card from captured image.
-    Returns JSON with status and message.
-    """
-    log("\n" + "=" * 80)
-    log("🎯 طلب جديد للتحقق من البطاقة")
-    log("=" * 80)
-    
-    data = request.get_json()
-    image_base64 = data.get('image', '')
-    
-    if not image_base64:
-        log("❌ لم يتم إرسال صورة")
-        return jsonify({"success": False, "message": "No image provided"}), 400
-    
-    log(f"📸 تم استلام صورة (حجم: {len(image_base64)} حرف)")
-    
-    # Remove data URL prefix if present
-    if ',' in image_base64:
-        image_base64 = image_base64.split(',')[1]
-        log("✂️ تم إزالة data URL prefix")
-    
-    # Save the image
-    saved_file = save_image(image_base64)
-    
-    # Extract ID information using Vision LLM
-    extracted = extract_id_from_image(image_base64)
-    id_number = extracted.get('id_number', 'NOT_FOUND')
-    name = extracted.get('name', '')
-    
-    log(f"\n📊 نتيجة الاستخراج:")
-    log(f"   الاسم: {name}")
-    log(f"   رقم البطاقة: {id_number}")
-    
-    # Check if ID was successfully read
-    if id_number == 'NOT_FOUND' or not id_number:
-        log("❌ فشل قراءة البطاقة")
-        log("=" * 80 + "\n")
-        return jsonify({
-            "success": False,
-            "message": "❌ Could not read ID card. Please rescan.",
-            "type": "error"
-        })
-    
-    # Check if person exists in database
-    person = get_person(id_number)
-    
-    if person is None:
-        # New person - auto-create
-        log(f"🆕 شخص جديد - سيتم إنشاء سجل")
-        create_person(id_number, name)
-        create_entry(name, id_number, 'NEW')
-        log(f"✅ تم إنشاء سجل جديد للشخص: {name}")
-        log(f"✅ تم تسجيل دخول جديد (NEW)")
-        log("=" * 80 + "\n")
-        return jsonify({
-            "success": True,
-            "message": f"✓ Welcome, {name}! Entry recorded.",
-            "type": "success"
-        })
-    else:
-        # Existing person - check if blocked
-        log(f"👤 شخص موجود في قاعدة البيانات: {person['name']}")
+@app.route('/api/verify', methods=['POST'])
+def verify_id():
+    """API endpoint for ID verification"""
+    try:
+        # Get image data from request
+        if 'image' not in request.files:
+            return jsonify({'error': 'No image provided'}), 400
         
-        if person['is_blocked'] == 1:
-            # Blocked - do NOT create entry
-            log(f"🚫 الشخص محظور!")
-            log(f"   السبب: {person['block_reason']}")
-            log(f"❌ تم رفض الدخول")
-            log("=" * 80 + "\n")
+        file = request.files['image']
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Generate unique filename
+        filename = str(uuid.uuid4()) + '.jpg'
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        
+        # Save uploaded file
+        file.save(filepath)
+        
+        # Process image
+        result_image, detections, message = processor.process_image(filepath)
+        
+        # Extract text results
+        first_name = ''
+        last_name = ''
+        national_id = ''
+        first_name_confidence = 0
+        last_name_confidence = 0
+        
+        for detection in detections:
+            if detection['type'] == 'extracted_text':
+                if detection['name'] == 'firstName':
+                    first_name = detection['text']
+                    first_name_confidence = detection['confidence']
+                elif detection['name'] == 'lastName':
+                    last_name = detection['text']
+                    last_name_confidence = detection['confidence']
+                elif detection['name'] == 'national_id':
+                    national_id = detection['text']
+        
+        # Clean up uploaded file
+        os.remove(filepath)
+        
+        # Validate extracted data
+        if not first_name or not last_name:
             return jsonify({
-                "success": False,
-                "message": f"⚠️ ACCESS DENIED\n{person['name']} (ID: {id_number[:4]}...) is BLOCKED.\nReason: {person['block_reason']}\nContact admin.",
-                "type": "blocked",
-                "person": {
-                    "name": person['name'],
-                    "id_number": id_number,
-                    "block_reason": person['block_reason']
+                'status': 'error',
+                'message': '❓ Retake photo — Name not clear',
+                'details': {
+                    'first_name': first_name,
+                    'last_name': last_name,
+                    'national_id': national_id
                 }
             })
-        else:
-            # Allowed - create entry
-            log(f"✅ الشخص غير محظور - السماح بالدخول")
-            create_entry(person['name'], id_number, 'ALLOWED')
-            log(f"✅ تم تسجيل دخول (ALLOWED)")
-            log("=" * 80 + "\n")
+        
+        if not national_id or not national_id.isdigit() or len(national_id) != 14:
             return jsonify({
-                "success": True,
-                "message": f"✓ {person['name']} – Access granted.",
-                "type": "success"
+                'status': 'error',
+                'message': '❓ Retake photo — ID not clear',
+                'details': {
+                    'first_name': first_name,
+                    'last_name': last_name,
+                    'national_id': national_id
+                }
             })
+        
+        # Combine names
+        full_name = f"{first_name} {last_name}".strip()
+        
+        # Check database for existing person
+        person = Person.query.filter_by(national_id=national_id).first()
+        
+        if not person:
+            # New person - auto-insert
+            person = Person(
+                name=full_name,
+                national_id=national_id,
+                blocked=False,
+                block_reason="قرار إداري"
+            )
+            db.session.add(person)
+            db.session.commit()
+            
+            # Log entry
+            entry = Entry(
+                name=full_name,
+                national_id=national_id,
+                status='Welcome'
+            )
+            db.session.add(entry)
+            db.session.commit()
+            
+            return jsonify({
+                'status': 'success',
+                'message': f'✓ Welcome {full_name}',
+                'details': {
+                    'name': full_name,
+                    'national_id': national_id,
+                    'action': 'new_person_added'
+                }
+            })
+        
+        else:
+            # Existing person
+            if person.blocked:
+                # Blocked person - no entry logged
+                return jsonify({
+                    'status': 'blocked',
+                    'message': f'⚠️ ACCESS DENIED\n{person.name} (ID: {national_id}) is BLOCKED\nReason: {person.block_reason}',
+                    'details': {
+                        'name': person.name,
+                        'national_id': national_id,
+                        'block_reason': person.block_reason
+                    }
+                })
+            else:
+                # Not blocked - log entry and grant access
+                entry = Entry(
+                    name=person.name,
+                    national_id=person.national_id,
+                    status='Access Granted'
+                )
+                db.session.add(entry)
+                db.session.commit()
+                
+                return jsonify({
+                    'status': 'success',
+                    'message': f'✓ Access granted',
+                    'details': {
+                        'name': person.name,
+                        'national_id': person.national_id,
+                        'action': 'access_granted'
+                    }
+                })
+        
+    except Exception as e:
+        logger.error(f"Verification error: {e}")
+        return jsonify({'error': f'Verification failed: {str(e)}'}), 500
 
-@app.route('/block', methods=['POST'])
-def block():
-    """Block a person by ID number."""
-    log("\n🚫 طلب حظر شخص")
-    data = request.get_json()
-    id_number = data.get('id_number', '')
-    reason = data.get('reason', 'Administrative decision')
-    
-    if not id_number:
-        log("❌ لم يتم تقديم رقم البطاقة")
-        return jsonify({"success": False, "message": "No ID number provided"}), 400
-    
-    log(f"   رقم البطاقة: {id_number}")
-    log(f"   السبب: {reason}")
-    
-    block_person(id_number, reason)
-    log(f"✅ تم حظر الشخص بنجاح\n")
-    return jsonify({"success": True, "message": f"Person {id_number} has been blocked."})
+@app.route('/api/people')
+def get_people():
+    """Get all people with their status"""
+    try:
+        people = Person.query.all()
+        result = []
+        for person in people:
+            # Get latest entry for this person
+            latest_entry = Entry.query.filter_by(national_id=person.national_id).order_by(Entry.timestamp.desc()).first()
+            last_seen = latest_entry.timestamp if latest_entry else person.created_at
+            
+            result.append({
+                'id': person.id,
+                'name': person.name,
+                'national_id': person.national_id,
+                'blocked': person.blocked,
+                'block_reason': person.block_reason,
+                'last_seen': last_seen.strftime('%Y-%m-%d %H:%M:%S')
+            })
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error getting people: {e}")
+        return jsonify({'error': str(e)}), 500
 
-@app.route('/unblock', methods=['POST'])
-def unblock():
-    """Unblock a person by ID number."""
-    log("\n✅ طلب إلغاء حظر شخص")
-    data = request.get_json()
-    id_number = data.get('id_number', '')
-    
-    if not id_number:
-        log("❌ لم يتم تقديم رقم البطاقة")
-        return jsonify({"success": False, "message": "No ID number provided"}), 400
-    
-    log(f"   رقم البطاقة: {id_number}")
-    
-    unblock_person(id_number)
-    log(f"✅ تم إلغاء حظر الشخص بنجاح\n")
-    return jsonify({"success": True, "message": f"Person {id_number} has been unblocked."})
+@app.route('/api/entries')
+def get_entries():
+    """Get all entries"""
+    try:
+        entries = Entry.query.order_by(Entry.timestamp.desc()).limit(100).all()
+        result = []
+        for entry in entries:
+            result.append({
+                'id': entry.id,
+                'name': entry.name,
+                'national_id': entry.national_id,
+                'status': entry.status,
+                'timestamp': entry.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            })
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error getting entries: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/search')
+def search():
+    """Search people by name or national ID"""
+    try:
+        query = request.args.get('q', '').strip()
+        if not query:
+            return jsonify([])
+        
+        # Search by name or national ID
+        people = Person.query.filter(
+            (Person.name.contains(query)) | 
+            (Person.national_id.contains(query))
+        ).all()
+        
+        result = []
+        for person in people:
+            # Get latest entry for this person
+            latest_entry = Entry.query.filter_by(national_id=person.national_id).order_by(Entry.timestamp.desc()).first()
+            last_seen = latest_entry.timestamp if latest_entry else person.created_at
+            
+            result.append({
+                'id': person.id,
+                'name': person.name,
+                'national_id': person.national_id,
+                'blocked': person.blocked,
+                'block_reason': person.block_reason,
+                'last_seen': last_seen.strftime('%Y-%m-%d %H:%M:%S')
+            })
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error searching: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/toggle-block/<int:person_id>', methods=['POST'])
+def toggle_block(person_id):
+    """Toggle block status for a person"""
+    try:
+        person = Person.query.get_or_404(person_id)
+        data = request.get_json()
+        
+        person.blocked = not person.blocked
+        if person.blocked:
+            person.block_reason = data.get('reason', 'قرار إداري')
+        else:
+            person.block_reason = 'قرار إداري'
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'blocked': person.blocked,
+            'block_reason': person.block_reason
+        })
+    except Exception as e:
+        logger.error(f"Error toggling block: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+from flask import send_from_directory
+
+# Create database tables
+with app.app_context():
+    db.create_all()
 
 if __name__ == '__main__':
-    # Initialize database
-    log("🚀 بدء تشغيل Hyde Park Gate System")
-    log("=" * 80)
-    log(f"🤖 Vision Model: {VISION_MODEL}")
-    log(f"🌐 OpenRouter Endpoint: {OPENROUTER_ENDPOINT}")
-    log(f"🔑 API Key: {'✅ موجود' if OPENROUTER_API_KEY else '❌ غير موجود'}")
-    log(f"📁 مجلد حفظ الصور: {CAPTURES_DIR}")
-    log(f"🔗 URL Prefix: {APP_PREFIX}")
-    log(f"🛠️ Debug Mode: {DEBUG_MODE}")
-    log("=" * 80 + "\n")
-    
-    init_db()
-    
-    # Run the app
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=DEBUG_MODE)
+    app.run(debug=True, host='0.0.0.0', port=5000)

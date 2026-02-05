@@ -1,291 +1,520 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>الإدارة - نظام بوابة هايد بارك</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title>Admin - Gates Hyde Park</title>
     <style>
+        :root {
+            --primary-color: #0066cc;
+            --success-color: #28a745;
+            --error-color: #dc3545;
+            --warning-color: #ffc107;
+            --text-color: #333;
+            --bg-color: #f8f9fa;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
         body {
-            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            background-color: var(--bg-color);
+            color: var(--text-color);
             min-height: 100vh;
-            padding: 20px;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        .container {
-            max-width: 1200px;
+
+        header {
+            background: white;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
-        .card {
+
+        .back-btn {
+            background: none;
             border: none;
-            border-radius: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            margin-bottom: 20px;
+            font-size: 1.2rem;
+            cursor: pointer;
+            color: var(--primary-color);
         }
-        .btn-back {
-            background: rgba(255,255,255,0.2);
-            color: white;
-            border: 2px solid white;
+
+        .title {
+            font-size: 1.2rem;
             font-weight: 600;
-            padding: 12px 30px;
-            border-radius: 10px;
+        }
+
+        .main-content {
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .search-section {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+
+        .search-container {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+
+        .search-input:focus {
+            border-color: var(--primary-color);
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
             text-decoration: none;
+            display: inline-block;
         }
-        h2 {
+
+        .btn-primary {
+            background-color: var(--primary-color);
             color: white;
-            font-weight: 700;
-            text-align: center;
-            margin-bottom: 30px;
         }
-        h4 {
-            font-weight: 700;
-            color: #333;
+
+        .btn-primary:hover {
+            background-color: #0056b3;
+        }
+
+        .btn-secondary {
+            background-color: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background-color: #545b62;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
             margin-bottom: 20px;
         }
-        .table {
-            margin-bottom: 0;
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            text-align: center;
         }
-        .badge {
-            padding: 8px 12px;
+
+        .stat-number {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 5px;
+        }
+
+        .stat-label {
+            color: #666;
             font-size: 0.9rem;
         }
-        .btn-block-action {
-            padding: 5px 15px;
-            font-size: 0.9rem;
-        }
-        .table-responsive {
-            border-radius: 10px;
+
+        .table-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
             overflow: hidden;
         }
+
+        .table-header {
+            padding: 20px;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .table-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead th {
+            text-align: left;
+            padding: 15px 20px;
+            background-color: #f8f9fa;
+            font-size: 0.9rem;
+            color: #666;
+            font-weight: 600;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        tbody td {
+            padding: 15px 20px;
+            border-bottom: 1px solid #f1f3f4;
+            font-size: 0.95rem;
+        }
+
+        tbody tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .status-badge {
+            padding: 4px 8px;
+            border-radius: 16px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
         .status-active {
-            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            background-color: #d4edda;
+            color: #155724;
         }
+
         .status-blocked {
-            background: linear-gradient(135deg, #eb3349 0%, #f45c43 100%);
+            background-color: #f8d7da;
+            color: #721c24;
         }
-        .status-new {
-            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+
+        .action-btn {
+            padding: 6px 12px;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            background: white;
+            cursor: pointer;
+            font-size: 0.8rem;
+            transition: all 0.3s ease;
         }
-        .status-allowed {
-            background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+
+        .action-btn:hover {
+            background-color: #f8f9fa;
+            border-color: #0066cc;
+        }
+
+        .action-btn.block-btn {
+            color: #dc3545;
+            border-color: #dc3545;
+        }
+
+        .action-btn.unblock-btn {
+            color: #28a745;
+            border-color: #28a745;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+
+        .modal h3 {
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+
+        .modal input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 1rem;
+            margin-bottom: 20px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .search-container {
+                flex-direction: column;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            table {
+                font-size: 0.85rem;
+            }
+            
+            thead th, tbody td {
+                padding: 10px;
+            }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="mb-3 d-flex justify-content-between">
-            <a href="{{ url_for('home') }}" class="btn btn-back">→ العودة للرئيسية</a>
-            <a href="{{ url_for('admin_logout') }}" class="btn btn-back">🚪 تسجيل خروج</a>
-        </div>
-        
-        <h2>⚙️ لوحة الإدارة</h2>
-        
-        <!-- Persons Table -->
-        <div class="card">
-            <div class="card-body">
-                <h4>👥 قاعدة بيانات الأشخاص</h4>
-                <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead class="table-light">
-                            <tr>
-                                <th>رقم البطاقة</th>
-                                <th>الاسم</th>
-                                <th>الحالة</th>
-                                <th>سبب الحظر</th>
-                                <th>الإجراء</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% if persons %}
-                                {% for person in persons %}
-                                <tr>
-                                    <td class="fw-bold">{{ person.id_number }}</td>
-                                    <td>{{ person.name }}</td>
-                                    <td>
-                                        {% if person.is_blocked == 1 %}
-                                            <span class="badge status-blocked text-white">محظور</span>
-                                        {% else %}
-                                            <span class="badge status-active text-white">نشط</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if person.block_reason %}
-                                            {{ person.block_reason }}
-                                        {% else %}
-                                            <span class="text-muted">—</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if person.is_blocked == 0 %}
-                                            <button class="btn btn-danger btn-sm btn-block-action" 
-                                                    onclick="blockPerson('{{ person.id_number }}', '{{ person.name }}')">
-                                                🚫 حظر
-                                            </button>
-                                        {% else %}
-                                            <button class="btn btn-success btn-sm btn-block-action" 
-                                                    onclick="unblockPerson('{{ person.id_number }}', '{{ person.name }}')">
-                                                ✅ إلغاء الحظر
-                                            </button>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
-                                <tr>
-                                    <td colspan="5" class="text-center text-muted py-4">
-                                        لا يوجد أشخاص مسجلين بعد.
-                                    </td>
-                                </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
+    <header>
+        <button class="back-btn" onclick="window.location.href='/'">←</button>
+        <div class="title">Admin Dashboard</div>
+        <div style="width: 40px;"></div>
+    </header>
+
+    <div class="main-content">
+        <div class="search-section">
+            <div class="search-container">
+                <input type="text" id="searchInput" class="search-input" placeholder="Search by name or national ID...">
+                <button class="btn btn-primary" onclick="searchPeople()">🔍 Search</button>
+                <button class="btn btn-secondary" onclick="loadPeople()">📋 View All</button>
             </div>
         </div>
 
-        <!-- Entries Log -->
-        <div class="card">
-            <div class="card-body">
-                <h4>📋 سجل الدخول الأخير</h4>
-                <div class="table-responsive">
-                    <table class="table table-hover">
-                        <thead class="table-light">
-                            <tr>
-                                <th>الوقت</th>
-                                <th>الاسم</th>
-                                <th>رقم البطاقة</th>
-                                <th>الحالة</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% if entries %}
-                                {% for entry in entries %}
-                                <tr>
-                                    <td>{{ entry.timestamp }}</td>
-                                    <td>{{ entry.name }}</td>
-                                    <td class="fw-bold">{{ entry.id_number }}</td>
-                                    <td>
-                                        {% if entry.status == 'NEW' %}
-                                            <span class="badge status-new text-white">جديد</span>
-                                        {% elif entry.status == 'ALLOWED' %}
-                                            <span class="badge status-allowed text-white">مسموح</span>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
-                                <tr>
-                                    <td colspan="4" class="text-center text-muted py-4">
-                                        لا يوجد سجلات دخول بعد.
-                                    </td>
-                                </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number" id="totalPeople">0</div>
+                <div class="stat-label">Total People</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="blockedPeople">0</div>
+                <div class="stat-label">Blocked</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="activePeople">0</div>
+                <div class="stat-label">Active</div>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <div class="table-header">
+                <div class="table-title">People Management</div>
+                <div style="color: #666; font-size: 0.9rem;">Last updated: <span id="lastUpdated">-</span></div>
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>National ID</th>
+                        <th>Status</th>
+                        <th>Last Seen</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="peopleTable">
+                    <!-- Data will be loaded here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Block/Unblock Modal -->
+    <div class="modal" id="blockModal">
+        <div class="modal-content">
+            <h3 id="modalTitle">Block Person</h3>
+            <p id="modalPersonName"></p>
+            <input type="text" id="blockReason" placeholder="Enter reason for blocking (default: قرار إداري)">
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                <button class="btn btn-primary" id="modalActionBtn">Block</button>
             </div>
         </div>
     </div>
 
-    <!-- Block Person Modal -->
-    <div class="modal fade" id="blockModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">🚫 حظر شخص</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body">
-                    <p>هل أنت متأكد من حظر <strong id="block-person-name"></strong>؟</p>
-                    <input type="hidden" id="block-person-id">
-                    <div class="mb-3">
-                        <label for="block-reason" class="form-label">السبب (اختياري):</label>
-                        <textarea class="form-control" id="block-reason" rows="3" 
-                                  placeholder="قرار إداري"></textarea>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
-                    <button type="button" class="btn btn-danger" onclick="confirmBlock()">حظر الشخص</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        let blockModal;
+        let currentPeople = [];
+        let isSearching = false;
 
-        document.addEventListener('DOMContentLoaded', function() {
-            blockModal = new bootstrap.Modal(document.getElementById('blockModal'));
-        });
-
-        function blockPerson(idNumber, name) {
-            document.getElementById('block-person-id').value = idNumber;
-            document.getElementById('block-person-name').textContent = name;
-            document.getElementById('block-reason').value = '';
-            blockModal.show();
-        }
-
-        async function confirmBlock() {
-            const idNumber = document.getElementById('block-person-id').value;
-            const reason = document.getElementById('block-reason').value || 'قرار إداري';
-
+        // Load people data
+        async function loadPeople() {
             try {
-                const response = await fetch('{{ url_for("block") }}', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        id_number: idNumber,
-                        reason: reason
-                    })
-                });
-
-                const result = await response.json();
-
-                if (result.success) {
-                    blockModal.hide();
-                    alert('تم حظر الشخص بنجاح!');
-                    location.reload();
-                } else {
-                    alert('خطأ في حظر الشخص: ' + result.message);
-                }
+                const response = await fetch('/api/people');
+                const people = await response.json();
+                currentPeople = people;
+                renderTable(people);
+                updateStats(people);
+                document.getElementById('lastUpdated').textContent = new Date().toLocaleString();
             } catch (error) {
-                console.error('Error:', error);
-                alert('خطأ في حظر الشخص. حاول مرة أخرى.');
+                console.error('Error loading people:', error);
             }
         }
 
-        async function unblockPerson(idNumber, name) {
-            if (!confirm(`هل أنت متأكد من إلغاء حظر ${name}؟`)) {
+        // Search people
+        async function searchPeople() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) {
+                loadPeople();
                 return;
             }
 
             try {
-                const response = await fetch('{{ url_for("unblock") }}', {
+                const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+                const people = await response.json();
+                renderTable(people);
+                updateStats(people);
+            } catch (error) {
+                console.error('Error searching people:', error);
+            }
+        }
+
+        // Render table
+        function renderTable(people) {
+            const tbody = document.getElementById('peopleTable');
+            tbody.innerHTML = '';
+
+            if (people.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #666; padding: 40px;">No people found</td></tr>';
+                return;
+            }
+
+            people.forEach(person => {
+                const tr = document.createElement('tr');
+                
+                const statusClass = person.blocked ? 'status-blocked' : 'status-active';
+                const statusText = person.blocked ? 'Blocked' : 'Active';
+                
+                tr.innerHTML = `
+                    <td>${person.name}</td>
+                    <td>${person.national_id}</td>
+                    <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                    <td>${person.last_seen}</td>
+                    <td>
+                        ${person.blocked ? 
+                            `<button class="action-btn unblock-btn" onclick="toggleBlock(${person.id}, false)">Unblock</button>` :
+                            `<button class="action-btn block-btn" onclick="toggleBlock(${person.id}, true)">Block</button>`
+                        }
+                    </td>
+                `;
+                
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Update statistics
+        function updateStats(people) {
+            const total = people.length;
+            const blocked = people.filter(p => p.blocked).length;
+            const active = total - blocked;
+
+            document.getElementById('totalPeople').textContent = total;
+            document.getElementById('blockedPeople').textContent = blocked;
+            document.getElementById('activePeople').textContent = active;
+        }
+
+        // Toggle block status
+        function toggleBlock(personId, shouldBlock) {
+            const person = currentPeople.find(p => p.id === personId);
+            if (!person) return;
+
+            document.getElementById('modalTitle').textContent = shouldBlock ? 'Block Person' : 'Unblock Person';
+            document.getElementById('modalPersonName').textContent = `Name: ${person.name}`;
+            document.getElementById('modalPersonName').style.fontWeight = 'bold';
+            document.getElementById('blockReason').placeholder = shouldBlock ? 'Enter reason for blocking (default: قرار إداري)' : 'Reason will be reset';
+            document.getElementById('modalActionBtn').textContent = shouldBlock ? 'Block' : 'Unblock';
+            document.getElementById('modalActionBtn').className = `btn ${shouldBlock ? 'btn-primary' : 'btn-secondary'}`;
+            
+            document.getElementById('modalActionBtn').onclick = () => confirmToggleBlock(personId, shouldBlock);
+            
+            document.getElementById('blockModal').style.display = 'flex';
+        }
+
+        // Confirm toggle block
+        async function confirmToggleBlock(personId, shouldBlock) {
+            const reason = document.getElementById('blockReason').value.trim() || 'قرار إداري';
+            
+            try {
+                const response = await fetch(`/api/toggle-block/${personId}`, {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        id_number: idNumber
-                    })
+                    body: JSON.stringify({ reason: reason })
                 });
 
                 const result = await response.json();
-
+                
                 if (result.success) {
-                    alert('تم إلغاء حظر الشخص بنجاح!');
-                    location.reload();
-                } else {
-                    alert('خطأ في إلغاء الحظر: ' + result.message);
+                    // Update local data
+                    const person = currentPeople.find(p => p.id === personId);
+                    if (person) {
+                        person.blocked = shouldBlock;
+                        person.block_reason = reason;
+                    }
+                    
+                    // Reload data to reflect changes
+                    loadPeople();
+                    closeModal();
                 }
             } catch (error) {
-                console.error('Error:', error);
-                alert('خطأ في إلغاء الحظر. حاول مرة أخرى.');
+                console.error('Error toggling block:', error);
             }
         }
+
+        // Close modal
+        function closeModal() {
+            document.getElementById('blockModal').style.display = 'none';
+            document.getElementById('blockReason').value = '';
+        }
+
+        // Initialize page
+        window.onload = loadPeople;
+
+        // Add search on input
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            if (e.target.value.length >= 3 || e.target.value.length === 0) {
+                searchPeople();
+            }
+        });
     </script>
 </body>
 </html>
