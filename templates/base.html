@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title if title else "بوابة التحقق" }}</title>
+  <link rel="stylesheet" href="/static/css/app.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="brand">
+        <h1>بوابة التحقق من بطاقة الرقم القومي</h1>
+        <span>نظام سريع وآمن لإدارة الدخول</span>
+      </div>
+      <nav class="nav-links">
+        <a class="btn btn-outline" href="/">الرئيسية</a>
+        <a class="btn btn-outline" href="/security">الأمن</a>
+        <a class="btn btn-outline" href="/admin">الأدمن</a>
+        <a class="btn btn-outline" href="/debug">Manual Debug (فحص يدوي)</a>
+      </nav>
+    </header>
+
+    {% block content %}{% endblock %}
+
+    <div class="footer">MVP احترافي | يعمل على بورت 5000</div>
+  </div>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

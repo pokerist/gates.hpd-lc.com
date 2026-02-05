@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card hero">
+  <h2>Manual Debug (فحص يدوي)</h2>
+  <p>جرّب رفع صورة أو التقاطها بالكاميرا، وشاهد حقول التعرف وحدودها.</p>
+</section>
+
+<section class="grid grid-2">
+  <div class="card">
+    <div class="camera-container">
+      <video id="debugCamera" autoplay playsinline></video>
+      <canvas id="debugCanvas" class="hidden" hidden></canvas>
+      <div class="camera-frame">
+        <div class="frame-box"></div>
+      </div>
+    </div>
+    <div style="margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap;">
+      <button class="btn btn-primary" id="debugCaptureBtn">التقاط</button>
+      <button class="btn btn-secondary" id="debugSwitchBtn">تبديل الكاميرا</button>
+      <label class="btn btn-outline">
+        رفع صورة
+        <input id="debugFileInput" type="file" accept="image/*" hidden />
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>الصورة مع الحقول</h3>
+    <div style="margin-top: 12px;">
+      <img id="debugImage" alt="debug" style="width:100%; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1); display:none;" />
+    </div>
+    <div id="debugData" class="field-list" style="margin-top: 14px;"></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/debug.js"></script>
+{% endblock %}

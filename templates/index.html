@@ -1,210 +1,25 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gates Hyde Park - Security System</title>
-    <style>
-        :root {
-            --primary-color: #0066cc;
-            --secondary-color: #f8f9fa;
-            --text-color: #333;
-            --border-color: #ddd;
-            --success-color: #28a745;
-            --error-color: #dc3545;
-            --warning-color: #ffc107;
-        }
+{% extends "base.html" %}
+{% block content %}
+<section class="hero card">
+  <h2>اختر وضع التشغيل</h2>
+  <p>واجهة عربية مبسطة للأمن والأدمن، مع وضع Debug يدوي لتجربة الاستخراج وتحديد الحقول.</p>
+</section>
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        }
-
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: var(--text-color);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-
-        .container {
-            max-width: 800px;
-            width: 100%;
-            text-align: center;
-        }
-
-        .logo {
-            margin-bottom: 40px;
-        }
-
-        .logo h1 {
-            font-size: 2.5rem;
-            color: white;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-            margin-bottom: 10px;
-        }
-
-        .logo p {
-            color: rgba(255, 255, 255, 0.8);
-            font-size: 1.1rem;
-        }
-
-        .main-content {
-            background: white;
-            padding: 40px;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 30px;
-        }
-
-        @media (max-width: 768px) {
-            .main-content {
-                grid-template-columns: 1fr;
-                padding: 30px 20px;
-            }
-        }
-
-        .button-card {
-            background: white;
-            border: 2px solid #e9ecef;
-            border-radius: 16px;
-            padding: 40px 30px;
-            text-align: center;
-            transition: all 0.3s ease;
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
-        }
-
-        .button-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 15px 30px rgba(0,0,0,0.1);
-            border-color: var(--primary-color);
-        }
-
-        .button-card.security {
-            border-color: var(--primary-color);
-        }
-
-        .button-card.admin {
-            border-color: #6c757d;
-        }
-
-        .button-card.security:hover {
-            background: #e3f2fd;
-        }
-
-        .button-card.admin:hover {
-            background: #f8f9fa;
-        }
-
-        .icon {
-            font-size: 4rem;
-            margin-bottom: 20px;
-            display: block;
-        }
-
-        .security .icon {
-            color: var(--primary-color);
-        }
-
-        .admin .icon {
-            color: #6c757d;
-        }
-
-        .title {
-            font-size: 1.5rem;
-            font-weight: 700;
-            margin-bottom: 10px;
-            color: var(--text-color);
-        }
-
-        .subtitle {
-            color: #666;
-            font-size: 0.9rem;
-            line-height: 1.5;
-        }
-
-        .security .subtitle {
-            color: var(--primary-color);
-        }
-
-        .admin .subtitle {
-            color: #6c757d;
-        }
-
-        .btn {
-            display: inline-block;
-            background-color: var(--primary-color);
-            color: white;
-            padding: 15px 40px;
-            border: none;
-            border-radius: 50px;
-            cursor: pointer;
-            font-size: 1.1rem;
-            font-weight: 600;
-            text-decoration: none;
-            transition: all 0.3s ease;
-            margin-top: 20px;
-            box-shadow: 0 4px 15px rgba(0, 102, 204, 0.3);
-        }
-
-        .btn:hover {
-            background-color: #0056b3;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0, 102, 204, 0.4);
-        }
-
-        .btn.secondary {
-            background-color: #6c757d;
-            box-shadow: 0 4px 15px rgba(108, 117, 125, 0.3);
-        }
-
-        .btn.secondary:hover {
-            background-color: #545b62;
-            box-shadow: 0 6px 20px rgba(108, 117, 125, 0.4);
-        }
-
-        .footer {
-            margin-top: 30px;
-            color: rgba(255, 255, 255, 0.6);
-            font-size: 0.9rem;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="logo">
-            <h1>Gates Hyde Park</h1>
-            <p>Advanced Security System</p>
-        </div>
-
-        <div class="main-content">
-            <div class="button-card security" onclick="window.location.href='/security'">
-                <span class="icon">🔒</span>
-                <div class="title">Security</div>
-                <div class="subtitle">Scan ID Card for Access Control</div>
-                <a href="/security" class="btn">Scan ID Card</a>
-            </div>
-
-            <div class="button-card admin" onclick="window.location.href='/admin'">
-                <span class="icon">📊</span>
-                <div class="title">Admin</div>
-                <div class="subtitle">Manage Entries and Access</div>
-                <a href="/admin" class="btn secondary">Open Dashboard</a>
-            </div>
-        </div>
-
-        <div class="footer">
-            Mobile/Tablet First Design • Egyptian ID Processing • Real-time Verification
-        </div>
-    </div>
-</body>
-</html>
+<section class="grid grid-3">
+  <div class="card">
+    <h3>واجهة الأمن</h3>
+    <p>تصوير البطاقة بالكاميرا والتحقق من السماح بالدخول فورًا.</p>
+    <a class="btn btn-primary" href="/security">دخول الأمن</a>
+  </div>
+  <div class="card">
+    <h3>واجهة الأدمن</h3>
+    <p>إدارة الحظر والبحث في قاعدة البيانات ومراجعة السجل.</p>
+    <a class="btn btn-primary" href="/admin">دخول الأدمن</a>
+  </div>
+  <div class="card">
+    <h3>Manual Debug (فحص يدوي)</h3>
+    <p>اختبار سريع لقراءة البيانات وتحديد الحقول على الصورة.</p>
+    <a class="btn btn-secondary" href="/debug">فتح Debug</a>
+  </div>
+</section>
+{% endblock %}
