@@ -11,6 +11,10 @@ import logging
 from datetime import datetime
 from models import db, Person, Entry
 
+# Configure Tesseract paths
+pytesseract.pytesseract.tesseract_cmd = '/usr/bin/tesseract'
+tessdata_dir_config = '--tessdata-dir "/usr/share/tesseract-ocr/5/tessdata"'
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -188,8 +192,8 @@ class IDCardProcessor:
             # Preprocess image for better OCR
             processed_image = self.preprocess_for_ocr(image)
             
-            # Configure Tesseract for Arabic digits using ara_number model
-            config = '--psm 6 --oem 3 -l ara_number'
+            # Configure Tesseract for Arabic digits using ara_number model with proper tessdata path
+            config = f'--psm 6 --oem 3 -l ara_number {tessdata_dir_config}'
             
             # Extract text
             text = pytesseract.image_to_string(processed_image, config=config)
