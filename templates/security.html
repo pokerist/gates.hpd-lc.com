@@ -73,7 +73,6 @@
             width: 100%;
             height: auto;
             display: block;
-            transform: scaleX(-1); /* Mirror effect */
         }
 
         .overlay-frame {
@@ -313,9 +312,8 @@
             canvas.width = video.videoWidth;
             canvas.height = video.videoHeight;
             
-            // Draw video frame to canvas (flipped for mirror effect)
-            context.scale(-1, 1);
-            context.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+            // Draw video frame to canvas (normal orientation - no flip)
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
             
             // Convert to blob
             canvas.toBlob(async (blob) => {
