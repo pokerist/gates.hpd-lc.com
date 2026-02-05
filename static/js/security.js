@@ -13,16 +13,41 @@ const resultVisits = document.getElementById("resultVisits");
 
 let currentStream = null;
 let facingMode = "environment";
+let imageCapture = null;
 
 async function startCamera() {
   if (currentStream) {
     currentStream.getTracks().forEach(track => track.stop());
   }
   try {
-    currentStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode }
-    });
+    const supported = navigator.mediaDevices.getSupportedConstraints
+      ? navigator.mediaDevices.getSupportedConstraints()
+      : {};
+
+    const videoConstraints = {
+      facingMode,
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      aspectRatio: { ideal: 1.7777777778 }
+    };
+
+    if (supported.focusMode || supported.exposureMode || supported.whiteBalanceMode) {
+      videoConstraints.advanced = [
+        supported.focusMode ? { focusMode: "continuous" } : {},
+        supported.exposureMode ? { exposureMode: "continuous" } : {},
+        supported.whiteBalanceMode ? { whiteBalanceMode: "continuous" } : {}
+      ];
+    }
+
+    currentStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
     video.srcObject = currentStream;
+
+    const track = currentStream.getVideoTracks()[0];
+    if ("ImageCapture" in window && track) {
+      imageCapture = new ImageCapture(track);
+    } else {
+      imageCapture = null;
+    }
   } catch (err) {
     console.error(err);
     alert("تعذر فتح الكاميرا. تأكد من الصلاحيات.");
@@ -30,6 +55,19 @@ async function startCamera() {
 }
 
 function captureFrame() {
+  if (imageCapture && imageCapture.takePhoto) {
+    try {
+      const track = currentStream.getVideoTracks()[0];
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      const imageWidth = caps.imageWidth?.max || caps.width?.max || 1920;
+      const imageHeight = caps.imageHeight?.max || caps.height?.max || 1080;
+      const blob = await imageCapture.takePhoto({ imageWidth, imageHeight });
+      return blob;
+    } catch (err) {
+      console.warn("ImageCapture failed, fallback to canvas.", err);
+    }
+  }
+
   const vw = video.videoWidth;
   const vh = video.videoHeight;
   if (!vw || !vh) {
@@ -59,7 +97,7 @@ function captureFrame() {
   ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
 
   return new Promise(resolve => {
-    canvas.toBlob(blob => resolve(blob), "image/jpeg", 0.92);
+    canvas.toBlob(blob => resolve(blob), "image/jpeg", 0.95);
   });
 }
 
