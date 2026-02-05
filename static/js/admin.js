@@ -25,7 +25,12 @@ function renderTable(items) {
       ? '<span class="badge blocked">محظور</span>'
       : '<span class="badge allowed">مسموح</span>';
 
+    const photoCell = person.photo_path
+      ? `<img src="/person-photos/${person.photo_path}" alt="photo" style="width:48px;height:60px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,0.2);" />`
+      : `<div style="width:48px;height:60px;border-radius:10px;border:1px dashed rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:rgba(255,255,255,0.5);">—</div>`;
+
     row.innerHTML = `
+      <td>${photoCell}</td>
       <td>${person.full_name || "—"}</td>
       <td>${person.national_id}</td>
       <td>${statusBadge}</td>

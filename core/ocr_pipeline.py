@@ -16,16 +16,16 @@ import easyocr
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = BASE_DIR / "models"
 DEBUG_DIR = BASE_DIR / "data" / "debug"
+PHOTO_DIR = BASE_DIR / "data" / "photos"
 TESSDATA_DIR = BASE_DIR / "tessdata"
 
 ID_CARD_MODEL_PATH = MODEL_DIR / "detect_id_card.pt"
 FIELD_MODEL_PATH = MODEL_DIR / "detect_odjects.pt"
-DIGITS_MODEL_PATH = MODEL_DIR / "detect_id.pt"
 
 _id_card_model: Optional[YOLO] = None
 _fields_model: Optional[YOLO] = None
-_digits_model: Optional[YOLO] = None
 _reader: Optional[easyocr.Reader] = None
+_tess_warned: set[str] = set()
 
 
 @dataclass
@@ -38,7 +38,7 @@ class OcrResult:
 
 
 def _ensure_models() -> None:
-    global _id_card_model, _fields_model, _digits_model, _reader
+    global _id_card_model, _fields_model, _reader
 
     if _reader is None:
         _reader = easyocr.Reader(["ar"], gpu=False)
@@ -49,9 +49,6 @@ def _ensure_models() -> None:
     if _fields_model is None:
         _fields_model = YOLO(str(FIELD_MODEL_PATH))
 
-    if _digits_model is None:
-        _digits_model = YOLO(str(DIGITS_MODEL_PATH))
-
     if TESSDATA_DIR.exists():
         os.environ["TESSDATA_PREFIX"] = str(TESSDATA_DIR)
 
@@ -61,7 +58,12 @@ def _tessdata_exists(lang: str) -> bool:
 
 
 def _tess_lang(lang: str) -> str:
-    return lang if _tessdata_exists(lang) else "ara"
+    if _tessdata_exists(lang):
+        return lang
+    if lang not in _tess_warned:
+        print(f"[TESSERACT] Missing traineddata for '{lang}'. Falling back to 'ara'.")
+        _tess_warned.add(lang)
+    return "ara"
 
 
 def _tess_config(base_config: str = "") -> str:
@@ -166,19 +168,24 @@ def _detect_fields(card_image: np.ndarray) -> List[Dict[str, Any]]:
     return boxes
 
 
-def _detect_digits(nid_image: np.ndarray) -> str:
-    if _digits_model is None:
+def _normalize_name_parts(parts: List[Dict[str, Any]]) -> str:
+    if not parts:
         return ""
-    results = _digits_model(nid_image, verbose=False)[0]
-    digits: List[Tuple[int, str]] = []
-    if results.boxes is None:
-        return ""
-    for box in results.boxes:
-        cls_id = int(box.cls[0]) if hasattr(box.cls, "__len__") else int(box.cls)
-        x1 = int(box.xyxy[0][0])
-        digits.append((x1, str(cls_id)))
-    digits.sort(key=lambda item: item[0])
-    return "".join(d for _, d in digits)
+    parts.sort(key=lambda item: (item["priority"], -item["x"]))
+    return " ".join([item["text"] for item in parts if item["text"]]).strip()
+
+
+def _name_priority(label: str) -> int:
+    label_lower = label.lower()
+    if label_lower in {"firstname", "first_name", "givenname", "fname", "name_first", "first"}:
+        return 0
+    if label_lower in {"middlename", "middle_name", "secondname", "second_name", "second", "name2"}:
+        return 1
+    if label_lower in {"lastname", "last_name", "familyname", "surname", "lname", "last"}:
+        return 2
+    if label_lower in {"fullname", "name"}:
+        return 3
+    return 4
 
 
 def annotate_image(image: np.ndarray, fields: List[Dict[str, Any]]) -> np.ndarray:
@@ -205,6 +212,28 @@ def annotate_image(image: np.ndarray, fields: List[Dict[str, Any]]) -> np.ndarra
     return annotated
 
 
+def _extract_photo_region(card_image: np.ndarray, fields: List[Dict[str, Any]]) -> Optional[np.ndarray]:
+    candidates = []
+    for field in fields:
+        label = field.get("label", "").lower()
+        if any(key in label for key in ["photo", "image", "img", "face", "portrait", "picture"]):
+            candidates.append(field)
+
+    if candidates:
+        best = _best_box(candidates)
+        if best:
+            return _crop(card_image, best["bbox"])
+
+    h, w = card_image.shape[:2]
+    x1 = int(w * 0.05)
+    x2 = int(w * 0.28)
+    y1 = int(h * 0.08)
+    y2 = int(h * 0.56)
+    if x2 > x1 and y2 > y1:
+        return card_image[y1:y2, x1:x2]
+    return None
+
+
 def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, Any]]]:
     _ensure_models()
 
@@ -226,10 +255,11 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
         "name",
         "firstName",
         "lastName",
+        "secondName",
     }
     name_lookup = {label.lower() for label in name_labels}
 
-    name_parts: List[Tuple[int, str]] = []
+    name_parts: List[Dict[str, Any]] = []
     nid_candidates = [f for f in fields if f["label"].lower() in {"nid", "id", "nationalid", "national_id"}]
 
     for field in fields:
@@ -238,10 +268,13 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
             crop = _crop(card_image, field["bbox"])
             text = _easyocr_text(crop)
             if text:
-                name_parts.append((field["bbox"][0], text))
+                name_parts.append({
+                    "priority": _name_priority(label),
+                    "x": field["bbox"][0],
+                    "text": text,
+                })
 
-    name_parts.sort(key=lambda item: item[0])
-    easyocr_name_raw = " ".join([part for _, part in name_parts]).strip()
+    easyocr_name_raw = _normalize_name_parts(name_parts)
 
     nid_field = _best_box(nid_candidates)
     nid_text = ""
@@ -249,7 +282,6 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
 
     if nid_field:
         nid_crop = _crop(card_image, nid_field["bbox"])
-        nid_text = _detect_digits(nid_crop)
         tess_nid_lang = _tess_lang("ara_number")
         tesseract_nid_text = _tesseract_text(
             _prep_for_tesseract(nid_crop),
@@ -264,23 +296,16 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
             config="--psm 6 -c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩",
         )
 
-    nid_text = _normalize_digits(nid_text)
     tesseract_nid_text = _normalize_digits(tesseract_nid_text)
-
-    easyocr_nid_raw = nid_text
-
-    if len(nid_text) != 14 and len(tesseract_nid_text) == 14:
-        nid_text = tesseract_nid_text
+    nid_text = tesseract_nid_text
 
     tess_name_lang = _tess_lang("ara_combined")
     tesseract_full_name = _tesseract_text(_prep_for_tesseract(card_image), lang=tess_name_lang, config="--psm 6")
     full_name = easyocr_name_raw
-    if not full_name:
-        full_name = tesseract_full_name.strip()
 
     easyocr_payload = {
         "full_name_raw": easyocr_name_raw,
-        "national_id_raw": easyocr_nid_raw,
+        "national_id_raw": "",
     }
 
     tesseract_payload = {
@@ -312,6 +337,12 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
 def run_ocr(image_bytes: bytes) -> OcrResult:
     result, _, _ = _process(image_bytes)
     return result
+
+
+def run_ocr_with_photo(image_bytes: bytes) -> Tuple[OcrResult, Optional[np.ndarray]]:
+    result, card_image, fields = _process(image_bytes)
+    photo = _extract_photo_region(card_image, fields)
+    return result, photo
 
 
 def save_debug_image(card_image: np.ndarray, fields: List[Dict[str, Any]]) -> str:

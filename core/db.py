@@ -19,6 +19,7 @@ def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
         "visits": row["visits"],
         "created_at": row["created_at"],
         "last_seen_at": row["last_seen_at"],
+        "photo_path": row["photo_path"],
     }
 
 
@@ -41,12 +42,17 @@ def init_db() -> None:
                 block_reason TEXT,
                 visits INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
-                last_seen_at TEXT
+                last_seen_at TEXT,
+                photo_path TEXT
             );
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_people_name ON people(full_name);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_people_nid ON people(national_id);")
+        try:
+            conn.execute("ALTER TABLE people ADD COLUMN photo_path TEXT;")
+        except sqlite3.OperationalError:
+            pass
 
 
 def get_person_by_nid(national_id: str) -> Optional[Dict[str, Any]]:
@@ -58,15 +64,15 @@ def get_person_by_nid(national_id: str) -> Optional[Dict[str, Any]]:
     return _row_to_dict(row) if row else None
 
 
-def add_person(national_id: str, full_name: str) -> Dict[str, Any]:
+def add_person(national_id: str, full_name: str, photo_path: Optional[str] = None) -> Dict[str, Any]:
     now = datetime.datetime.utcnow().isoformat()
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO people (national_id, full_name, blocked, block_reason, visits, created_at, last_seen_at)
-            VALUES (?, ?, 0, NULL, 1, ?, ?)
+            INSERT INTO people (national_id, full_name, blocked, block_reason, visits, created_at, last_seen_at, photo_path)
+            VALUES (?, ?, 0, NULL, 1, ?, ?, ?)
             """,
-            (national_id, full_name, now, now),
+            (national_id, full_name, now, now, photo_path),
         )
     return get_person_by_nid(national_id)  # type: ignore[return-value]
 
@@ -88,6 +94,17 @@ def update_name_if_missing(national_id: str, full_name: str) -> Optional[Dict[st
         conn.execute(
             "UPDATE people SET full_name = COALESCE(NULLIF(full_name, ''), ?) WHERE national_id = ?",
             (full_name, national_id),
+        )
+    return get_person_by_nid(national_id)
+
+
+def update_photo_if_missing(national_id: str, photo_path: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not photo_path:
+        return get_person_by_nid(national_id)
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE people SET photo_path = COALESCE(NULLIF(photo_path, ''), ?) WHERE national_id = ?",
+            (photo_path, national_id),
         )
     return get_person_by_nid(national_id)
 

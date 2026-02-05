@@ -15,13 +15,16 @@ let currentStream = null;
 let facingMode = "environment";
 let imageCapture = null;
 
-async function getStreamWithFallback(primary, fallback) {
-  try {
-    return await navigator.mediaDevices.getUserMedia({ video: primary });
-  } catch (err) {
-    console.warn("Primary constraints failed, fallback.", err);
-    return await navigator.mediaDevices.getUserMedia({ video: fallback });
+async function tryGetStream(constraintsList) {
+  for (const constraints of constraintsList) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: constraints });
+      return stream;
+    } catch (err) {
+      console.warn("Constraints failed", constraints, err);
+    }
   }
+  throw new Error("No compatible camera constraints");
 }
 
 async function cropBlobToAspect(blob, targetAspect, mime = "image/jpeg", quality = 0.98) {
@@ -88,34 +91,39 @@ async function startCamera() {
 
     const facingConstraint = supported.facingMode ? { ideal: facingMode } : facingMode;
 
-    const highConstraints = {
-      facingMode: facingConstraint,
-      width: { ideal: 4096 },
-      height: { ideal: 2160 },
-      aspectRatio: { ideal: 1.7777777778 },
-      frameRate: { ideal: 30, max: 60 }
-    };
+    const constraintsList = [
+      {
+        facingMode: facingConstraint,
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+        frameRate: { ideal: 30 },
+        resizeMode: supported.resizeMode ? "none" : undefined
+      },
+      {
+        facingMode: facingConstraint,
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30 }
+      },
+      { facingMode: facingConstraint },
+      true
+    ];
 
-    const fallbackConstraints = {
-      facingMode: facingConstraint,
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
-      aspectRatio: { ideal: 1.7777777778 },
-      frameRate: { ideal: 30 }
-    };
+    const cleaned = constraintsList.map(item => {
+      if (item === true) return true;
+      const copy = { ...item };
+      Object.keys(copy).forEach(key => copy[key] === undefined && delete copy[key]);
+      return copy;
+    });
 
-    if (supported.focusMode || supported.exposureMode || supported.whiteBalanceMode) {
-      const advanced = [
-        supported.focusMode ? { focusMode: "continuous" } : {},
-        supported.exposureMode ? { exposureMode: "continuous" } : {},
-        supported.whiteBalanceMode ? { whiteBalanceMode: "continuous" } : {}
-      ];
-      highConstraints.advanced = advanced;
-      fallbackConstraints.advanced = advanced;
-    }
-
-    currentStream = await getStreamWithFallback(highConstraints, fallbackConstraints);
+    currentStream = await tryGetStream(cleaned);
     video.srcObject = currentStream;
+
+    try {
+      await video.play();
+    } catch (err) {
+      console.warn("video.play failed", err);
+    }
 
     const track = currentStream.getVideoTracks()[0];
     if ("ImageCapture" in window && track) {
@@ -126,9 +134,9 @@ async function startCamera() {
 
     if (track && track.getCapabilities && track.applyConstraints) {
       const caps = track.getCapabilities();
+      const advanced = [];
       const maxWidth = caps.width?.max || caps.imageWidth?.max;
       const maxHeight = caps.height?.max || caps.imageHeight?.max;
-      const advanced = [];
       if (maxWidth && maxHeight) {
         advanced.push({ width: maxWidth, height: maxHeight });
       }
@@ -163,8 +171,8 @@ async function captureFrame() {
     try {
       const track = currentStream.getVideoTracks()[0];
       const caps = track.getCapabilities ? track.getCapabilities() : {};
-      const imageWidth = caps.imageWidth?.max || caps.width?.max || 4096;
-      const imageHeight = caps.imageHeight?.max || caps.height?.max || 2160;
+      const imageWidth = caps.imageWidth?.max || caps.width?.max || 1920;
+      const imageHeight = caps.imageHeight?.max || caps.height?.max || 1080;
       const blob = await imageCapture.takePhoto({ imageWidth, imageHeight });
       return await cropBlobToAspect(blob, 1.58, "image/jpeg", 0.98);
     } catch (err) {

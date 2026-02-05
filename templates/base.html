@@ -3,27 +3,26 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>{{ title if title else "بوابة التحقق" }}</title>
+  <title>{{ title if title else "Gates Hyde Park" }}</title>
   <link rel="stylesheet" href="/static/css/app.css" />
 </head>
 <body>
   <div class="app">
     <header>
       <div class="brand">
-        <h1>بوابة التحقق من بطاقة الرقم القومي</h1>
-        <span>نظام سريع وآمن لإدارة الدخول</span>
+        <h1>Gates Hyde Park</h1>
+        <span>بوابة دخول ذكية بخبرة أمنية حديثة</span>
       </div>
       <nav class="nav-links">
         <a class="btn btn-outline" href="/">الرئيسية</a>
         <a class="btn btn-outline" href="/security">الأمن</a>
         <a class="btn btn-outline" href="/admin">الأدمن</a>
-        <a class="btn btn-outline" href="/debug">Manual Debug (فحص يدوي)</a>
       </nav>
     </header>
 
     {% block content %}{% endblock %}
 
-    <div class="footer">MVP احترافي | يعمل على بورت 5000</div>
+    <div class="footer">Powered by SSS</div>
   </div>
 
   {% block scripts %}{% endblock %}

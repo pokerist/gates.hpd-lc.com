@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
+import uuid
+
+import cv2
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -10,21 +13,24 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from core import db
-from core.ocr_pipeline import prepare_debug_artifacts, run_ocr
+from core.ocr_pipeline import prepare_debug_artifacts, run_ocr_with_photo
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 DATA_DIR = BASE_DIR / "data"
 DEBUG_DIR = DATA_DIR / "debug"
+PHOTO_DIR = DATA_DIR / "photos"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+PHOTO_DIR.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="بوابة التحقق من بطاقة الرقم القومي", version="1.0.0")
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.mount("/debug-images", StaticFiles(directory=str(DEBUG_DIR)), name="debug-images")
+app.mount("/person-photos", StaticFiles(directory=str(PHOTO_DIR)), name="person-photos")
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
@@ -42,7 +48,17 @@ class UnblockRequest(BaseModel):
 def on_startup() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+    PHOTO_DIR.mkdir(parents=True, exist_ok=True)
     db.init_db()
+
+
+def _save_person_photo(photo_image, national_id: str) -> str:
+    PHOTO_DIR.mkdir(parents=True, exist_ok=True)
+    safe_id = "".join(ch for ch in national_id if ch.isdigit())
+    filename = f"{safe_id}_{uuid.uuid4().hex[:8]}.jpg"
+    output_path = PHOTO_DIR / filename
+    cv2.imwrite(str(output_path), photo_image)
+    return filename
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -91,7 +107,7 @@ async def scan_card(image: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="الملف لازم يكون صورة")
 
     image_bytes = await image.read()
-    result = run_ocr(image_bytes)
+    result, photo_image = run_ocr_with_photo(image_bytes)
 
     national_id = result.national_id
     full_name = result.full_name
@@ -110,8 +126,13 @@ async def scan_card(image: UploadFile = File(...)):
         )
 
     person = db.get_person_by_nid(national_id)
+    photo_filename = None
+    if photo_image is not None and (person is None or not person.get("photo_path")):
+        photo_filename = _save_person_photo(photo_image, national_id)
     if person:
         if person["blocked"]:
+            if photo_filename:
+                db.update_photo_if_missing(national_id, photo_filename)
             return {
                 "status": "blocked",
                 "message": "هذا الشخص محظور من الدخول",
@@ -125,6 +146,8 @@ async def scan_card(image: UploadFile = File(...)):
 
         db.increment_visit(national_id)
         db.update_name_if_missing(national_id, full_name)
+        if photo_filename:
+            db.update_photo_if_missing(national_id, photo_filename)
         person = db.get_person_by_nid(national_id)
 
         return {
@@ -137,7 +160,7 @@ async def scan_card(image: UploadFile = File(...)):
             },
         }
 
-    person = db.add_person(national_id, full_name)
+    person = db.add_person(national_id, full_name, photo_filename)
     return {
         "status": "new",
         "message": "أول مرة - تم السماح بالدخول",

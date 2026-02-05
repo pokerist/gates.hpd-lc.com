@@ -1,25 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="hero card">
-  <h2>اختر وضع التشغيل</h2>
-  <p>واجهة عربية مبسطة للأمن والأدمن، مع وضع Debug يدوي لتجربة الاستخراج وتحديد الحقول.</p>
+  <h2>بوابة دخول ذكية بأعلى مستوى دقة</h2>
+  <p>التقط صورة البطاقة في ثوانٍ، تحقق تلقائي، وسجل دخول فوري مع لوحة تحكم شاملة.</p>
 </section>
 
-<section class="grid grid-3">
-  <div class="card">
+<section class="grid grid-2" style="margin-top: 18px;">
+  <div class="card action-card">
     <h3>واجهة الأمن</h3>
-    <p>تصوير البطاقة بالكاميرا والتحقق من السماح بالدخول فورًا.</p>
+    <p>تصوير البطاقة والتحقق من السماح بالدخول فورًا.</p>
     <a class="btn btn-primary" href="/security">دخول الأمن</a>
   </div>
-  <div class="card">
+  <div class="card action-card">
     <h3>واجهة الأدمن</h3>
-    <p>إدارة الحظر والبحث في قاعدة البيانات ومراجعة السجل.</p>
-    <a class="btn btn-primary" href="/admin">دخول الأدمن</a>
-  </div>
-  <div class="card">
-    <h3>Manual Debug (فحص يدوي)</h3>
-    <p>اختبار سريع لقراءة البيانات وتحديد الحقول على الصورة.</p>
-    <a class="btn btn-secondary" href="/debug">فتح Debug</a>
+    <p>إدارة الحظر والبحث في قاعدة البيانات ومتابعة السجل.</p>
+    <a class="btn btn-secondary" href="/admin">دخول الأدمن</a>
   </div>
 </section>
+
+<div class="debug-link">
+  <button id="debugLink" class="btn btn-outline">Manual Debug (فحص يدوي)</button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const debugLink = document.getElementById("debugLink");
+  debugLink.addEventListener("click", () => {
+    const pin = prompt("أدخل رمز الدخول للـ Debug");
+    if (pin === null) return;
+    if (pin === "1150445") {
+      window.location.href = "/debug";
+    } else {
+      alert("الرمز غير صحيح");
+    }
+  });
+</script>
 {% endblock %}
