@@ -4,14 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{{ title if title else "Gates Hyde Park" }}</title>
+  <link rel="icon" type="image/png" href="/static/img/favicon.png" />
   <link rel="stylesheet" href="/static/css/app.css" />
 </head>
 <body>
   <div class="app">
     <header>
       <div class="brand">
-        <h1>Gates Hyde Park</h1>
-        <span>بوابة دخول ذكية بخبرة أمنية حديثة</span>
+        <div class="brand-mark">
+          <img src="/static/img/hyde-park-logo.png" alt="Hyde Park logo" style="width:100%;height:100%;object-fit:contain;" />
+        </div>
+        <div class="brand-text">
+          <h1>Gates Hyde Park</h1>
+          <span>واجهة الأمن والأدمن</span>
+        </div>
       </div>
       <nav class="nav-links">
         <a class="btn btn-outline" href="/">الرئيسية</a>
@@ -22,7 +28,7 @@
 
     {% block content %}{% endblock %}
 
-    <div class="footer">Powered by SSS</div>
+    <div class="footer">Powered by SSS, All Rights Reserved</div>
   </div>
 
   {% block scripts %}{% endblock %}

@@ -2,7 +2,7 @@
 {% block content %}
 <section class="card hero">
   <h2>Manual Debug (فحص يدوي)</h2>
-  <p>جرّب رفع صورة أو التقاطها بالكاميرا، وشاهد حقول التعرف وحدودها.</p>
+  <p>رفع صورة أو التقاطها للمعاينة فقط.</p>
 </section>
 
 <section class="grid grid-2">
@@ -29,7 +29,24 @@
     <div style="margin-top: 12px;">
       <img id="debugImage" alt="debug" style="width:100%; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1); display:none;" />
     </div>
-    <div id="debugData" class="field-list" style="margin-top: 14px;"></div>
+    <div class="debug-accordion">
+      <details class="accordion">
+        <summary>النتيجة النهائية</summary>
+        <div id="debugFinal" class="field-list"></div>
+      </details>
+      <details class="accordion">
+        <summary>EasyOCR</summary>
+        <div id="debugEasy" class="field-list"></div>
+      </details>
+      <details class="accordion">
+        <summary>Tesseract</summary>
+        <div id="debugTess" class="field-list"></div>
+      </details>
+      <details class="accordion">
+        <summary>الحقول المكتشفة</summary>
+        <div id="debugFields" class="field-list"></div>
+      </details>
+    </div>
   </div>
 </section>
 {% endblock %}

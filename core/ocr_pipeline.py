@@ -234,7 +234,7 @@ def _extract_photo_region(card_image: np.ndarray, fields: List[Dict[str, Any]]) 
     return None
 
 
-def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, Any]]]:
+def _process(image_bytes: bytes, include_tess_name: bool = False) -> Tuple[OcrResult, np.ndarray, List[Dict[str, Any]]]:
     _ensure_models()
 
     image = _decode_image(image_bytes)
@@ -260,11 +260,17 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
     name_lookup = {label.lower() for label in name_labels}
 
     name_parts: List[Dict[str, Any]] = []
+    name_fields: List[Dict[str, Any]] = []
     nid_candidates = [f for f in fields if f["label"].lower() in {"nid", "id", "nationalid", "national_id"}]
 
     for field in fields:
         label = field["label"]
         if label.lower() in name_lookup:
+            name_fields.append({
+                "priority": _name_priority(label),
+                "x": field["bbox"][0],
+                "bbox": field["bbox"],
+            })
             crop = _crop(card_image, field["bbox"])
             text = _easyocr_text(crop)
             if text:
@@ -299,8 +305,24 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
     tesseract_nid_text = _normalize_digits(tesseract_nid_text)
     nid_text = tesseract_nid_text
 
-    tess_name_lang = _tess_lang("ara_combined")
-    tesseract_full_name = _tesseract_text(_prep_for_tesseract(card_image), lang=tess_name_lang, config="--psm 6")
+    tesseract_full_name = ""
+    if include_tess_name and name_fields:
+        tess_name_lang = _tess_lang("ara_combined")
+        tess_parts: List[Dict[str, Any]] = []
+        for field in name_fields:
+            crop = _crop(card_image, field["bbox"])
+            text = _tesseract_text(
+                _prep_for_tesseract(crop),
+                lang=tess_name_lang,
+                config="--psm 7",
+            )
+            if text:
+                tess_parts.append({
+                    "priority": field["priority"],
+                    "x": field["x"],
+                    "text": text,
+                })
+        tesseract_full_name = _normalize_name_parts(tess_parts)
     full_name = easyocr_name_raw
 
     easyocr_payload = {
@@ -335,12 +357,12 @@ def _process(image_bytes: bytes) -> Tuple[OcrResult, np.ndarray, List[Dict[str, 
 
 
 def run_ocr(image_bytes: bytes) -> OcrResult:
-    result, _, _ = _process(image_bytes)
+    result, _, _ = _process(image_bytes, include_tess_name=False)
     return result
 
 
 def run_ocr_with_photo(image_bytes: bytes) -> Tuple[OcrResult, Optional[np.ndarray]]:
-    result, card_image, fields = _process(image_bytes)
+    result, card_image, fields = _process(image_bytes, include_tess_name=False)
     photo = _extract_photo_region(card_image, fields)
     return result, photo
 
@@ -355,7 +377,7 @@ def save_debug_image(card_image: np.ndarray, fields: List[Dict[str, Any]]) -> st
 
 
 def prepare_debug_artifacts(image_bytes: bytes) -> Dict[str, Any]:
-    result, card_image, fields = _process(image_bytes)
+    result, card_image, fields = _process(image_bytes, include_tess_name=True)
     file_id = save_debug_image(card_image, fields)
 
     return {

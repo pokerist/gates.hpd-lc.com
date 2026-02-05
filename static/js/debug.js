@@ -4,7 +4,10 @@ const captureBtn = document.getElementById("debugCaptureBtn");
 const switchBtn = document.getElementById("debugSwitchBtn");
 const fileInput = document.getElementById("debugFileInput");
 const debugImage = document.getElementById("debugImage");
-const debugData = document.getElementById("debugData");
+const debugFinal = document.getElementById("debugFinal");
+const debugEasy = document.getElementById("debugEasy");
+const debugTess = document.getElementById("debugTess");
+const debugFields = document.getElementById("debugFields");
 
 let currentStream = null;
 let facingMode = "environment";
@@ -210,7 +213,10 @@ async function captureFrame() {
 
 async function sendImage(blob) {
   if (!blob) return;
-  debugData.innerHTML = "جاري التحليل...";
+  debugFinal.innerHTML = "جاري التحليل...";
+  debugEasy.innerHTML = "";
+  debugTess.innerHTML = "";
+  debugFields.innerHTML = "";
   const form = new FormData();
   form.append("image", blob, "debug.jpg");
 
@@ -220,7 +226,7 @@ async function sendImage(blob) {
     renderDebug(data);
   } catch (err) {
     console.error(err);
-    debugData.innerHTML = "حدث خطأ أثناء الاتصال بالخادم";
+    debugFinal.innerHTML = "حدث خطأ أثناء الاتصال بالخادم";
   }
 }
 
@@ -235,22 +241,27 @@ function renderDebug(data) {
   const tess = data.tesseract || {};
   const final = data.final || {};
 
-  const lines = [];
-  lines.push(`<div class="field-item"><strong>النتيجة النهائية - الاسم:</strong> <span>${final.full_name || "—"}</span></div>`);
-  lines.push(`<div class="field-item"><strong>النتيجة النهائية - الرقم القومي:</strong> <span>${final.national_id || "—"}</span></div>`);
-  lines.push(`<div class="field-item"><strong>EasyOCR - الاسم الخام:</strong> <span>${easy.full_name_raw || "—"}</span></div>`);
-  lines.push(`<div class="field-item"><strong>EasyOCR - الرقم الخام:</strong> <span>${easy.national_id_raw || "—"}</span></div>`);
-  lines.push(`<div class="field-item"><strong>Tesseract - الاسم الخام:</strong> <span>${tess.full_name_raw || "—"}</span></div>`);
-  lines.push(`<div class="field-item"><strong>Tesseract - الرقم الخام:</strong> <span>${tess.national_id_raw || "—"}</span></div>`);
+  debugFinal.innerHTML = `
+    <div class="field-item"><strong>الاسم:</strong> <span>${final.full_name || "—"}</span></div>
+    <div class="field-item"><strong>الرقم القومي:</strong> <span>${final.national_id || "—"}</span></div>
+  `;
+
+  debugEasy.innerHTML = `
+    <div class="field-item"><strong>الاسم الخام:</strong> <span>${easy.full_name_raw || "—"}</span></div>
+  `;
+
+  debugTess.innerHTML = `
+    <div class="field-item"><strong>الرقم الخام:</strong> <span>${tess.national_id_raw || "—"}</span></div>
+    <div class="field-item"><strong>الاسم الخام:</strong> <span>${tess.full_name_raw || "—"}</span></div>
+  `;
 
   if (fields.length) {
-    lines.push(`<div style="margin-top: 8px; font-weight: 700;">الحقول المكتشفة:</div>`);
-    fields.forEach(field => {
-      lines.push(`<div class="field-item"><span>${field.label}</span><span>ثقة: ${field.conf.toFixed(2)}</span></div>`);
-    });
+    debugFields.innerHTML = fields.map(field => (
+      `<div class="field-item"><span>${field.label}</span><span>ثقة: ${field.conf.toFixed(2)}</span></div>`
+    )).join("");
+  } else {
+    debugFields.innerHTML = "—";
   }
-
-  debugData.innerHTML = lines.join("");
 }
 
 captureBtn.addEventListener("click", async () => {

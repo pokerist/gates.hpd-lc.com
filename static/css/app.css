@@ -55,8 +55,8 @@ header {
 
 .brand {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  gap: 12px;
 }
 
 .brand h1 {
@@ -68,6 +68,24 @@ header {
 .brand span {
   color: var(--muted);
   font-size: 0.95rem;
+}
+
+.brand-mark {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .nav-links {
@@ -165,6 +183,44 @@ header {
   margin-top: 28px;
   display: flex;
   justify-content: center;
+}
+
+.debug-accordion {
+  margin-top: 16px;
+  display: grid;
+  gap: 10px;
+}
+
+details.accordion {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 14px;
+  background: rgba(2, 6, 23, 0.55);
+}
+
+details.accordion[open] {
+  background: var(--card-strong);
+}
+
+details.accordion summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--text);
+  list-style: none;
+}
+
+details.accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+details.accordion summary::after {
+  content: "▾";
+  float: left;
+  color: var(--muted);
+}
+
+details.accordion[open] summary::after {
+  content: "▴";
 }
 
 .camera-container {
