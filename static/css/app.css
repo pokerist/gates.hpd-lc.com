@@ -235,6 +235,11 @@ header {
   flex: 1;
 }
 
+.range-control input[type="number"] {
+  width: 120px;
+  text-align: center;
+}
+
 .range-control span {
   min-width: 48px;
   text-align: center;

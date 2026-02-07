@@ -33,8 +33,28 @@
         <p>كلما زادت القيمة، زادت الدقة وقلت المطابقات الخاطئة.</p>
       </div>
       <div class="range-control">
-        <input type="range" id="faceMatchThreshold" min="0.2" max="0.9" step="0.01" />
+        <input type="number" id="faceMatchThreshold" min="0.2" max="0.9" step="0.01" />
         <span id="faceMatchThresholdValue">0.35</span>
+      </div>
+    </div>
+    <div class="settings-row">
+      <div class="settings-meta">
+        <h3>أقصى بُعد للصورة المرسلة لـ Document AI</h3>
+        <p>قيمة أقل تعني سرعة أعلى وتكلفة أقل.</p>
+      </div>
+      <div class="range-control">
+        <input type="number" id="docaiMaxDim" min="640" max="3000" step="10" />
+        <span id="docaiMaxDimValue">1600</span>
+      </div>
+    </div>
+    <div class="settings-row">
+      <div class="settings-meta">
+        <h3>جودة JPEG لـ Document AI</h3>
+        <p>قيمة أقل تقلل الحجم، مع احتمال بسيط لتأثير الدقة.</p>
+      </div>
+      <div class="range-control">
+        <input type="number" id="docaiJpegQuality" min="50" max="95" step="1" />
+        <span id="docaiJpegQualityValue">85</span>
       </div>
     </div>
   </div>

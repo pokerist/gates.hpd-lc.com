@@ -29,6 +29,16 @@
     <div style="margin-top: 12px;">
       <img id="debugImage" alt="debug" style="width:100%; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1); display:none;" />
     </div>
+    <div class="grid grid-2" style="margin-top: 16px;">
+      <div>
+        <h4 style="margin-bottom: 8px;">الصورة المُرسلة</h4>
+        <img id="debugRawImage" alt="raw" style="width:100%; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1); display:none;" />
+      </div>
+      <div>
+        <h4 style="margin-bottom: 8px;">صورة الوجه المستخرجة</h4>
+        <img id="debugFaceImage" alt="face" style="width:100%; border-radius: 14px; border: 1px solid rgba(255,255,255,0.1); display:none;" />
+      </div>
+    </div>
     <div class="debug-accordion">
       <details class="accordion">
         <summary>النتيجة النهائية</summary>
@@ -41,6 +51,10 @@
       <details class="accordion">
         <summary>Document AI (كل الحقول)</summary>
         <div id="debugDocai" class="field-list"></div>
+      </details>
+      <details class="accordion">
+        <summary>زمن التنفيذ</summary>
+        <div id="debugTimings" class="field-list"></div>
       </details>
       <details class="accordion">
         <summary>الحقول المكتشفة</summary>

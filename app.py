@@ -55,6 +55,8 @@ class SettingsRequest(BaseModel):
     docai_grayscale: bool
     face_match_enabled: Optional[bool] = None
     face_match_threshold: Optional[float] = None
+    docai_max_dim: Optional[int] = None
+    docai_jpeg_quality: Optional[int] = None
 
 
 class UpdatePersonRequest(BaseModel):
@@ -318,10 +320,13 @@ async def debug_scan(image: UploadFile = File(...)):
     return {
         "status": "ok",
         "debug_image_url": debug_image_url,
+        "raw_image_url": artifacts.get("raw_image_url"),
+        "face_image_url": artifacts.get("face_image_url"),
         "fields": artifacts["fields"],
         "tesseract": artifacts["tesseract"],
         "docai": artifacts["docai"],
         "docai_entities": artifacts["docai_entities"],
+        "timings": artifacts.get("timings", {}),
         "final": artifacts["final"],
     }
 
@@ -332,6 +337,8 @@ def get_settings():
         "docai_grayscale": app_settings.get_docai_grayscale(),
         "face_match_enabled": app_settings.get_face_match_enabled(),
         "face_match_threshold": app_settings.get_face_match_threshold(),
+        "docai_max_dim": app_settings.get_docai_max_dim(),
+        "docai_jpeg_quality": app_settings.get_docai_jpeg_quality(),
     }
 
 
@@ -342,11 +349,17 @@ def update_settings(payload: SettingsRequest):
         app_settings.set_face_match_enabled(payload.face_match_enabled)
     if payload.face_match_threshold is not None:
         app_settings.set_face_match_threshold(payload.face_match_threshold)
+    if payload.docai_max_dim is not None:
+        app_settings.set_docai_max_dim(payload.docai_max_dim)
+    if payload.docai_jpeg_quality is not None:
+        app_settings.set_docai_jpeg_quality(payload.docai_jpeg_quality)
     return {
         "status": "ok",
         "docai_grayscale": app_settings.get_docai_grayscale(),
         "face_match_enabled": app_settings.get_face_match_enabled(),
         "face_match_threshold": app_settings.get_face_match_threshold(),
+        "docai_max_dim": app_settings.get_docai_max_dim(),
+        "docai_jpeg_quality": app_settings.get_docai_jpeg_quality(),
     }
 
 

@@ -84,6 +84,14 @@ def init_db() -> None:
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
             ("face_match_threshold", "0.35"),
         )
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            ("docai_max_dim", "1600"),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            ("docai_jpeg_quality", "85"),
+        )
 
 
 def get_person_by_nid(national_id: str) -> Optional[Dict[str, Any]]:

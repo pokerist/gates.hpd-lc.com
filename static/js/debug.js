@@ -4,10 +4,13 @@ const captureBtn = document.getElementById("debugCaptureBtn");
 const switchBtn = document.getElementById("debugSwitchBtn");
 const fileInput = document.getElementById("debugFileInput");
 const debugImage = document.getElementById("debugImage");
+const debugRawImage = document.getElementById("debugRawImage");
+const debugFaceImage = document.getElementById("debugFaceImage");
 const debugFinal = document.getElementById("debugFinal");
 const debugTess = document.getElementById("debugTess");
 const debugFields = document.getElementById("debugFields");
 const debugDocai = document.getElementById("debugDocai");
+const debugTimings = document.getElementById("debugTimings");
 
 let currentStream = null;
 let facingMode = "environment";
@@ -217,6 +220,10 @@ async function sendImage(blob) {
   debugTess.innerHTML = "";
   debugFields.innerHTML = "";
   debugDocai.innerHTML = "";
+  debugTimings.innerHTML = "";
+  debugImage.style.display = "none";
+  debugRawImage.style.display = "none";
+  debugFaceImage.style.display = "none";
   const form = new FormData();
   form.append("image", blob, "debug.jpg");
 
@@ -235,11 +242,20 @@ function renderDebug(data) {
     debugImage.src = `${data.debug_image_url}?t=${Date.now()}`;
     debugImage.style.display = "block";
   }
+  if (data.raw_image_url) {
+    debugRawImage.src = `${data.raw_image_url}?t=${Date.now()}`;
+    debugRawImage.style.display = "block";
+  }
+  if (data.face_image_url) {
+    debugFaceImage.src = `${data.face_image_url}?t=${Date.now()}`;
+    debugFaceImage.style.display = "block";
+  }
 
   const fields = data.fields || [];
   const tess = data.tesseract || {};
   const final = data.final || {};
   const docaiEntities = data.docai_entities || [];
+  const timings = data.timings || {};
 
   debugFinal.innerHTML = `
     <div class="field-item"><strong>الاسم:</strong> <span>${final.full_name || "—"}</span></div>
@@ -257,6 +273,32 @@ function renderDebug(data) {
     )).join("");
   } else {
     debugDocai.innerHTML = "—";
+  }
+
+  const timingLabels = {
+    total_ms: "الإجمالي",
+    model_load_ms: "تحميل الموديلات",
+    decode_ms: "قراءة الصورة",
+    detect_card_ms: "اكتشاف البطاقة",
+    detect_fields_ms: "اكتشاف الحقول",
+    extract_photo_ms: "استخراج الوجه",
+    face_embedding_ms: "بصمة الوجه",
+    face_match_ms: "مطابقة الوجه",
+    docai_ms: "Document AI",
+    tesseract_nid_ms: "Tesseract الرقم",
+    tesseract_name_ms: "Tesseract الاسم"
+  };
+
+  const timingEntries = Object.entries(timings);
+  if (timingEntries.length) {
+    debugTimings.innerHTML = timingEntries.map(([key, value]) => {
+      const label = timingLabels[key] || key;
+      const num = Number(value);
+      const text = Number.isFinite(num) ? `${num.toFixed(2)} ms` : "—";
+      return `<div class="field-item"><span>${label}</span><span>${text}</span></div>`;
+    }).join("");
+  } else {
+    debugTimings.innerHTML = "—";
   }
 
   if (fields.length) {

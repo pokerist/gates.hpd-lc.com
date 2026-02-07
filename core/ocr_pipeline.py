@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from time import perf_counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -47,6 +48,7 @@ class ScanResult:
     docai: Dict[str, Any]
     face_match: Optional[Dict[str, Any]]
     face_embedding: Optional[np.ndarray]
+    timings: Dict[str, float]
 
 
 def _ensure_models() -> None:
@@ -211,21 +213,11 @@ def _encode_jpeg(image: np.ndarray, quality: int = 95) -> bytes:
 
 
 def _docai_max_dim() -> int:
-    raw = os.getenv("DOC_AI_MAX_DIM", "1600")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        value = 1600
-    return max(640, min(value, 3000))
+    return app_settings.get_docai_max_dim()
 
 
 def _docai_jpeg_quality() -> int:
-    raw = os.getenv("DOC_AI_JPEG_QUALITY", "85")
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        value = 85
-    return max(50, min(value, 95))
+    return app_settings.get_docai_jpeg_quality()
 
 
 def _resize_for_docai(image: np.ndarray) -> np.ndarray:
@@ -474,6 +466,39 @@ def _prepare_card(image_bytes: bytes) -> Tuple[np.ndarray, List[Dict[str, Any]],
     return card_image, fields, card_bbox
 
 
+def _prepare_assets_timed(
+    image_bytes: bytes,
+    timings: Dict[str, float],
+) -> Tuple[np.ndarray, np.ndarray, List[Dict[str, Any]], Tuple[int, int, int, int], Optional[np.ndarray]]:
+    t0 = perf_counter()
+    _ensure_models()
+    timings["model_load_ms"] = (perf_counter() - t0) * 1000
+
+    t0 = perf_counter()
+    image = _decode_image(image_bytes)
+    timings["decode_ms"] = (perf_counter() - t0) * 1000
+
+    t0 = perf_counter()
+    card_bbox = _detect_card_bbox(image)
+    timings["detect_card_ms"] = (perf_counter() - t0) * 1000
+
+    if card_bbox:
+        card_image = _crop(image, card_bbox)
+    else:
+        card_image = image
+        card_bbox = (0, 0, image.shape[1], image.shape[0])
+
+    t0 = perf_counter()
+    fields = _detect_fields(card_image)
+    timings["detect_fields_ms"] = (perf_counter() - t0) * 1000
+
+    t0 = perf_counter()
+    photo = _extract_photo_region(card_image, fields)
+    timings["extract_photo_ms"] = (perf_counter() - t0) * 1000
+
+    return image, card_image, fields, card_bbox, photo
+
+
 def _normalize_name_parts(parts: List[Dict[str, Any]]) -> str:
     if not parts:
         return ""
@@ -624,15 +649,21 @@ def _tesseract_name_from_fields(card_image: np.ndarray, fields: List[Dict[str, A
 
 
 def run_security_scan(image_bytes: bytes) -> ScanResult:
-    card_image, fields, card_bbox, photo = prepare_assets(image_bytes)
+    timings: Dict[str, float] = {}
+    total_start = perf_counter()
+    _, card_image, fields, card_bbox, photo = _prepare_assets_timed(image_bytes, timings)
     face_match_info = None
     face_embedding = None
 
     if app_settings.get_face_match_enabled() and photo is not None:
+        t0 = perf_counter()
         face_embedding = face_match.extract_face_embedding(photo)
+        timings["face_embedding_ms"] = (perf_counter() - t0) * 1000
         if face_embedding is not None:
             threshold = app_settings.get_face_match_threshold()
+            t0 = perf_counter()
             match = face_match.find_best_match(face_embedding, threshold)
+            timings["face_match_ms"] = (perf_counter() - t0) * 1000
             if match:
                 person, score = match
                 print(f"[FACE] Match score={score:.3f} nid={person.get('national_id')}")
@@ -658,6 +689,10 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
                     tesseract_raw={},
                     debug={"card_bbox": card_bbox, "fields": fields},
                 )
+                timings["total_ms"] = (perf_counter() - total_start) * 1000
+                if timings:
+                    log_payload = {key: round(value, 2) for key, value in timings.items()}
+                    print("[TIMING]", log_payload)
                 return ScanResult(
                     ocr=ocr,
                     photo_image=photo,
@@ -667,9 +702,12 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
                     docai={},
                     face_match=face_match_info,
                     face_embedding=face_embedding,
+                    timings=timings,
                 )
 
+    t0 = perf_counter()
     docai_payload = _docai_extract_fields(card_image) or {}
+    timings["docai_ms"] = (perf_counter() - t0) * 1000
     full_name = (docai_payload.get("full_name") or "").strip()
     docai_nid = _normalize_digits(docai_payload.get("national_id") or "")
 
@@ -680,14 +718,20 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
 
     if docai_payload:
         if len(docai_nid) < 14:
+            t0 = perf_counter()
             tess_nid = _tesseract_nid_from_fields(card_image, fields)
+            timings["tesseract_nid_ms"] = (perf_counter() - t0) * 1000
             tesseract_payload["national_id_raw"] = tess_nid
             if len(tess_nid) > len(docai_nid):
                 docai_nid = tess_nid
         national_id = docai_nid
     else:
+        t0 = perf_counter()
         tesseract_full_name = _tesseract_name_from_fields(card_image, fields)
+        timings["tesseract_name_ms"] = (perf_counter() - t0) * 1000
+        t0 = perf_counter()
         tesseract_nid_text = _tesseract_nid_from_fields(card_image, fields)
+        timings["tesseract_nid_ms"] = (perf_counter() - t0) * 1000
         tesseract_payload = {
             "full_name_raw": tesseract_full_name,
             "national_id_raw": tesseract_nid_text,
@@ -705,6 +749,11 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
         debug={"card_bbox": card_bbox, "fields": fields},
     )
 
+    timings["total_ms"] = (perf_counter() - total_start) * 1000
+    if timings:
+        log_payload = {key: round(value, 2) for key, value in timings.items()}
+        print("[TIMING]", log_payload)
+
     return ScanResult(
         ocr=ocr,
         photo_image=photo,
@@ -714,6 +763,7 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
         docai=docai_payload,
         face_match=face_match_info,
         face_embedding=face_embedding,
+        timings=timings,
     )
 
 
@@ -731,21 +781,50 @@ def save_debug_image(card_image: np.ndarray, fields: List[Dict[str, Any]]) -> st
     return file_id
 
 
+def _save_debug_variant(image: np.ndarray, name: str, file_id: str) -> str:
+    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = DEBUG_DIR / f"{name}_{file_id}.jpg"
+    cv2.imwrite(str(output_path), image)
+    return str(output_path)
+
+
 def prepare_debug_artifacts(image_bytes: bytes) -> Dict[str, Any]:
-    card_image, fields, card_bbox = _prepare_card(image_bytes)
-    result, _, _ = _process(image_bytes, include_tess_name=True)
-    docai_payload = _docai_extract_fields(card_image)
+    scan = run_security_scan(image_bytes)
+    card_image = scan.card_image
+    fields = scan.fields
+    card_bbox = scan.card_bbox
     file_id = save_debug_image(card_image, fields)
+
+    try:
+        raw_image = _decode_image(image_bytes)
+        _save_debug_variant(raw_image, "raw", file_id)
+        raw_url = f"/debug-images/raw_{file_id}.jpg"
+    except Exception:
+        raw_url = ""
+
+    face_url = ""
+    if scan.photo_image is not None:
+        _save_debug_variant(scan.photo_image, "face", file_id)
+        face_url = f"/debug-images/face_{file_id}.jpg"
+
+    tesseract_payload = {
+        "full_name_raw": _tesseract_name_from_fields(card_image, fields),
+        "national_id_raw": _tesseract_nid_from_fields(card_image, fields),
+    }
+    docai_payload = scan.docai or {}
 
     return {
         "file_id": file_id,
         "card_bbox": card_bbox,
         "fields": fields,
-        "tesseract": result.tesseract_raw,
+        "tesseract": tesseract_payload,
         "docai": docai_payload or {},
         "docai_entities": (docai_payload or {}).get("entities", []),
+        "raw_image_url": raw_url,
+        "face_image_url": face_url,
+        "timings": scan.timings,
         "final": {
-            "full_name": (docai_payload or {}).get("full_name", result.full_name),
-            "national_id": (docai_payload or {}).get("national_id", result.national_id),
+            "full_name": scan.ocr.full_name,
+            "national_id": scan.ocr.national_id,
         },
     }
