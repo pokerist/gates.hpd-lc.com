@@ -8,6 +8,7 @@ const debugFinal = document.getElementById("debugFinal");
 const debugEasy = document.getElementById("debugEasy");
 const debugTess = document.getElementById("debugTess");
 const debugFields = document.getElementById("debugFields");
+const debugDocai = document.getElementById("debugDocai");
 
 let currentStream = null;
 let facingMode = "environment";
@@ -217,6 +218,7 @@ async function sendImage(blob) {
   debugEasy.innerHTML = "";
   debugTess.innerHTML = "";
   debugFields.innerHTML = "";
+  debugDocai.innerHTML = "";
   const form = new FormData();
   form.append("image", blob, "debug.jpg");
 
@@ -240,6 +242,7 @@ function renderDebug(data) {
   const easy = data.easyocr || {};
   const tess = data.tesseract || {};
   const final = data.final || {};
+  const docaiEntities = data.docai_entities || [];
 
   debugFinal.innerHTML = `
     <div class="field-item"><strong>الاسم:</strong> <span>${final.full_name || "—"}</span></div>
@@ -254,6 +257,14 @@ function renderDebug(data) {
     <div class="field-item"><strong>الرقم الخام:</strong> <span>${tess.national_id_raw || "—"}</span></div>
     <div class="field-item"><strong>الاسم الخام:</strong> <span>${tess.full_name_raw || "—"}</span></div>
   `;
+
+  if (docaiEntities.length) {
+    debugDocai.innerHTML = docaiEntities.map(item => (
+      `<div class="field-item"><span>${item.type || "?"}</span><span>${item.text || "—"}</span></div>`
+    )).join("");
+  } else {
+    debugDocai.innerHTML = "—";
+  }
 
   if (fields.length) {
     debugFields.innerHTML = fields.map(field => (

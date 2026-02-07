@@ -121,7 +121,7 @@ def _match_entity_type(entity_type: str, candidates: List[str]) -> bool:
     return False
 
 
-def _entity_text(entity: Any) -> str:
+def _entity_text(entity: Any, doc_text: str) -> str:
     if hasattr(entity, "mention_text") and entity.mention_text:
         return entity.mention_text
     normalized_value = getattr(entity, "normalized_value", None)
@@ -129,10 +129,24 @@ def _entity_text(entity: Any) -> str:
         text = getattr(normalized_value, "text", "")
         if text:
             return text
+    text_anchor = getattr(entity, "text_anchor", None)
+    if text_anchor is not None:
+        segments = getattr(text_anchor, "text_segments", []) or []
+        if doc_text and segments:
+            parts = []
+            for seg in segments:
+                try:
+                    start = int(getattr(seg, "start_index", 0) or 0)
+                    end = int(getattr(seg, "end_index", 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if end > start:
+                    parts.append(doc_text[start:end])
+            return "".join(parts).strip()
     return ""
 
 
-def _pick_best_entity(entities: List[Any], candidates: List[str]) -> str:
+def _pick_best_entity(entities: List[Any], candidates: List[str], doc_text: str) -> str:
     best_text = ""
     best_conf = -1.0
     for entity in entities:
@@ -140,7 +154,7 @@ def _pick_best_entity(entities: List[Any], candidates: List[str]) -> str:
         if not _match_entity_type(entity_type, candidates):
             continue
         confidence = float(getattr(entity, "confidence", 0.0) or 0.0)
-        text = _entity_text(entity).strip()
+        text = _entity_text(entity, doc_text).strip()
         if text and confidence >= best_conf:
             best_conf = confidence
             best_text = text
@@ -154,7 +168,15 @@ def _encode_jpeg(image: np.ndarray, quality: int = 95) -> bytes:
     return buffer.tobytes()
 
 
-def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, str]]:
+def _serialize_docai_entity(entity: Any, doc_text: str) -> Dict[str, Any]:
+    return {
+        "type": getattr(entity, "type_", "") or "",
+        "text": _entity_text(entity, doc_text),
+        "confidence": float(getattr(entity, "confidence", 0.0) or 0.0),
+    }
+
+
+def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, Any]]:
     settings = _docai_settings()
     if settings is None:
         return None
@@ -186,7 +208,9 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, str]]:
         )
 
         result = client.process_document(request=request)
+        doc_text = getattr(result.document, "text", "") or ""
         entities = list(getattr(result.document, "entities", []) or [])
+        entity_items = [_serialize_docai_entity(entity, doc_text) for entity in entities]
 
         name_candidates = _docai_candidates(
             "DOC_AI_NAME_TYPES",
@@ -197,15 +221,26 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, str]]:
             ["national_id", "nationalid", "nationalID", "nid", "id_number", "identity_number"],
         )
 
-        full_name = _pick_best_entity(entities, name_candidates)
-        national_id = _normalize_digits(_pick_best_entity(entities, nid_candidates))
+        full_name = _pick_best_entity(entities, name_candidates, doc_text)
+        national_id = _normalize_digits(_pick_best_entity(entities, nid_candidates, doc_text))
 
         if not full_name and not national_id:
             entity_types = [getattr(e, "type_", "") for e in entities if getattr(e, "type_", "")]
-            print(f"[DOC-AI] No matching entities. Types seen: {entity_types}")
+            preview = []
+            for e in entities:
+                etype = getattr(e, "type_", "")
+                if not etype:
+                    continue
+                text = _entity_text(e, doc_text)
+                preview.append(f\"{etype}:{text[:40]}\")
+            print(f\"[DOC-AI] No matching entities. Types seen: {entity_types} | Samples: {preview}\")
             return None
 
-        payload = {"full_name": full_name, "national_id": national_id}
+        payload = {
+            "full_name": full_name,
+            "national_id": national_id,
+            "entities": entity_items,
+        }
         print("[OCR][docai]", payload)
         return payload
     except Exception as exc:
@@ -510,11 +545,14 @@ def run_ocr_with_photo(image_bytes: bytes) -> Tuple[OcrResult, Optional[np.ndarr
 
     docai_payload = _docai_extract_fields(card_image)
     if docai_payload:
+        local_result, _, _ = _process(image_bytes, include_tess_name=False)
+        full_name = docai_payload.get("full_name") or local_result.full_name
+        national_id = docai_payload.get("national_id") or local_result.national_id
         result = OcrResult(
-            full_name=docai_payload.get("full_name", ""),
-            national_id=docai_payload.get("national_id", ""),
-            easyocr_raw={},
-            tesseract_raw={},
+            full_name=full_name,
+            national_id=national_id,
+            easyocr_raw=local_result.easyocr_raw,
+            tesseract_raw=local_result.tesseract_raw,
             debug={"card_bbox": card_bbox, "fields": fields},
         )
         return result, photo
@@ -545,6 +583,7 @@ def prepare_debug_artifacts(image_bytes: bytes) -> Dict[str, Any]:
         "easyocr": result.easyocr_raw,
         "tesseract": result.tesseract_raw,
         "docai": docai_payload or {},
+        "docai_entities": (docai_payload or {}).get("entities", []),
         "final": {
             "full_name": (docai_payload or {}).get("full_name", result.full_name),
             "national_id": (docai_payload or {}).get("national_id", result.national_id),
