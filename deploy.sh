@@ -42,7 +42,7 @@ fi
 MODE_ARG="${1:-}"
 MODE="${MODE_ARG:-${APP_ENV:-development}}"
 START_POSTGRES="${START_POSTGRES:-0}"
-START_REDIS="${START_REDIS:-0}"
+START_REDIS="${START_REDIS:-}"
 
 if [[ "$MODE" == "prod" || "$MODE" == "production" ]]; then
   export APP_ENV="production"
@@ -51,6 +51,11 @@ else
   export APP_ENV="development"
   export PRODUCTION=0
 fi
+
+if [ "$PRODUCTION" = "1" ] && [ -z "${START_REDIS}" ]; then
+  START_REDIS=1
+fi
+START_REDIS="${START_REDIS:-0}"
 
 if [ "$PRODUCTION" = "1" ]; then
   if [ -z "${DATABASE_URL:-}" ] && [ -z "${POSTGRES_URL:-}" ]; then
@@ -75,6 +80,26 @@ if [ "$START_REDIS" = "1" ]; then
   fi
   if [ -z "${REDIS_URL:-}" ]; then
     export REDIS_URL="redis://localhost:6379/0"
+  fi
+fi
+
+if [ "$PRODUCTION" = "1" ]; then
+  if [ -n "${REDIS_URL:-}" ]; then
+    RQ_QUEUE="${RQ_QUEUE:-gates}"
+    RQ_LOG="$ROOT/data/logs/rq.log"
+    if command -v pgrep >/dev/null 2>&1; then
+      if pgrep -f "rq worker ${RQ_QUEUE}" >/dev/null 2>&1; then
+        echo "[RQ] Worker already running for queue ${RQ_QUEUE}."
+      else
+        echo "[RQ] تشغيل عامل RQ في الخلفية..."
+        nohup rq worker "$RQ_QUEUE" >>"$RQ_LOG" 2>&1 &
+      fi
+    else
+      echo "[RQ] تشغيل عامل RQ في الخلفية..."
+      nohup rq worker "$RQ_QUEUE" >>"$RQ_LOG" 2>&1 &
+    fi
+  else
+    echo "[RQ] REDIS_URL غير مضبوط. لن يتم تشغيل عامل الخلفية."
   fi
 fi
 

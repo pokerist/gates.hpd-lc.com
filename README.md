@@ -25,6 +25,7 @@ bash deploy.sh production
 ```
 سيتم تشغيل Gunicorn مع Uvicorn workers وتسجيل اللوجات داخل `data/logs/`.
 راجع `PRODUCTION.md` لتجهيز الإنتاج بالكامل.
+في وضع production سيتم تشغيل Redis (إذا لم يكن مضبوطًا) وتشغيل عامل RQ تلقائيًا بالخلفية.
 
 ## تشغيل Worker (RQ)
 معالجة تسجيل الأشخاص الجدد تتم في الخلفية لتسريع رد تطبيق الموبايل.
@@ -40,6 +41,7 @@ export RQ_QUEUE=gates
 rq worker gates
 ```
 بدون Redis سيعمل النظام لكن التسجيل الخلفي سيتم داخل نفس السيرفر وقد يبطئ الاستجابة.
+في production يتم تشغيل العامل تلقائيًا عبر `deploy.sh`.
 
 ## قاعدة البيانات
 ### PostgreSQL (Production)

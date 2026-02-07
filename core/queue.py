@@ -25,7 +25,11 @@ def _job_timeout() -> int:
         return 180
 
 
-def enqueue_registration(raw_path: str, original_card_filename: Optional[str]) -> Optional[str]:
+def enqueue_registration(
+    raw_path: str,
+    original_card_filename: Optional[str],
+    placeholder_nid: Optional[str] = None,
+) -> Optional[str]:
     url = _redis_url()
     if not url:
         return None
@@ -36,6 +40,7 @@ def enqueue_registration(raw_path: str, original_card_filename: Optional[str]) -
             tasks.register_person_job,
             raw_path,
             original_card_filename,
+            placeholder_nid,
             job_timeout=_job_timeout(),
         )
         print(f"[RQ] Enqueued job {job.id}")

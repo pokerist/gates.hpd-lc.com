@@ -35,6 +35,7 @@ export REDIS_URL=redis://localhost:6379/0
 export RQ_QUEUE=gates
 rq worker gates
 ```
+في وضع production يتم تشغيل العامل تلقائيًا عند تشغيل `deploy.sh` (وتسجيل لوجاته في `data/logs/rq.log`).
 
 ## Rate Limiting
 الإعدادات في `.env`:

@@ -404,16 +404,33 @@ def _process_scan_external(image_bytes: bytes, background_tasks: Optional[Backgr
             "is_new": False,
         }
 
-    job_id = rq_queue.enqueue_registration(raw_path, original_card_filename)
+    placeholder_nid = media.generate_temp_nid()
+    photo_filename = media.save_person_photo(scan.photo_image, placeholder_nid)
+    card_filename = original_card_filename
+    if card_filename is None and scan.card_image is not None:
+        card_filename = media.save_card_image(scan.card_image, placeholder_nid)
+    embedding_blob = media.serialize_embedding(scan.face_embedding)
+    db.add_person(
+        placeholder_nid,
+        "",
+        photo_filename,
+        card_filename,
+        embedding_blob,
+    )
+    if embedding_blob:
+        face_match.mark_index_dirty()
+
+    job_id = rq_queue.enqueue_registration(raw_path, original_card_filename, placeholder_nid)
     if job_id is None:
         if background_tasks is not None:
             background_tasks.add_task(
                 background_tasks_runner.register_person_job,
                 raw_path,
                 original_card_filename,
+                placeholder_nid,
             )
         else:
-            background_tasks_runner.register_person_job(raw_path, original_card_filename)
+            background_tasks_runner.register_person_job(raw_path, original_card_filename, placeholder_nid)
 
     return {
         "status": "allowed",

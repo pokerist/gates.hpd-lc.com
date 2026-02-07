@@ -781,7 +781,7 @@ def _tesseract_name_from_fields(card_image: np.ndarray, fields: List[Dict[str, A
     return _normalize_name_parts(tess_parts)
 
 
-def run_security_scan(image_bytes: bytes) -> ScanResult:
+def run_security_scan(image_bytes: bytes, skip_face_match: bool = False) -> ScanResult:
     timings: Dict[str, float] = {}
     total_start = perf_counter()
     try:
@@ -812,7 +812,7 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
     face_match_info = None
     face_embedding = None
 
-    if app_settings.get_face_match_enabled() and photo is not None:
+    if not skip_face_match and app_settings.get_face_match_enabled() and photo is not None:
         t0 = perf_counter()
         face_embedding = face_match.extract_face_embedding(photo)
         timings["face_embedding_ms"] = (perf_counter() - t0) * 1000
