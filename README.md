@@ -1,177 +1,178 @@
-# Gates - بوابة الدخول الذكية (MVP)
+# Gates Hyde Park — نظام إدارة الدخول
 
-واجهة عربية احترافية للأمن والأدمن مع Manual Debug لاستخراج بيانات بطاقة الرقم القومي.
+نظام إدارة دخول يعتمد على مطابقة الوجه محلياً مع OCR للبطاقة القومية المصرية. الواجهة الأساسية هي لوحة الأدمن والـ Manual Debug، أما “الأمن” فيستخدم تطبيق موبايل يتواصل مع API خارجي على المنفذ `5000`.
 
-## المزايا
-- واجهة موبايل أولًا للأمن مع كاميرا وفريم مناسب للبطاقة.
-- استخراج الرقم القومي عبر Tesseract محليًا (Fallback).
-- دعم Google Document AI كنظام OCR أساسي للاسم والرقم القومي عند تفعيله.
-- مطابقة وجه محلية (InsightFace / ArcFace) لتقليل تكلفة Document AI.
-- لوج تفصيلي في الكونسول لنتائج OCR.
-- تخزين صورة البطاقة الشخصية وإظهارها في لوحة الأدمن.
-- معالجة خلفية عبر Redis/RQ لتسريع الاستجابة عند تسجيل أشخاص جدد.
-- دعم SQLite و PostgreSQL لإدارة الدخول والحظر.
+## ماذا يعمل النظام الآن
+- مطابقة وجه محلية (InsightFace / ArcFace) للرد السريع على أفراد الأمن.
+- OCR أساسي عبر Google Document AI لاستخراج الاسم والرقم القومي.
+- Tesseract يستخدم فقط كـ fallback لاستخراج الرقم القومي عندما يفشل Document AI.
+- تسجيل الأشخاص الجدد يتم فورياً مع رد سريع، ثم يُستكمل OCR في الخلفية عبر Redis/RQ.
+- لوحة أدمن لإدارة الأشخاص (بحث، حظر/إلغاء حظر، تعديل البيانات، حذف).
+- Manual Debug لرفع صورة وعرض خطوات المعالجة، الصور، والـ timings.
+- تخزين صورة الوجه وصورة البطاقة الأصلية لكل سجل.
 
-## التشغيل على Ubuntu
+## تدفق المعالجة (Flow)
+1. تطبيق الموبايل يرسل صورة البطاقة كـ Base64 إلى `/api/v1/security/scan-base64`.
+2. السيرفر يفك الترميز ويكتشف البطاقة ويستخرج صورة الوجه.
+3. يتم عمل Face Match محلياً.
+4. في حالة وجود تطابق:
+- يتم الرد فوراً بحالة `allowed` أو `blocked`.
+- يتم تحديث الزيارات وتخزين أحدث صورة وجه/بطاقة.
+5. في حالة عدم وجود تطابق:
+- يتم إنشاء سجل مؤقت فوراً مع صورة الوجه والبطاقة.
+- يتم الرد فوراً بحالة `allowed` مع `is_new=true`.
+- يتم تشغيل Job في الخلفية لإكمال OCR وربط البيانات.
+6. Job الخلفية يستخدم Document AI، ولو فشل الرقم القومي فقط يتم استخدام Tesseract للرقم القومي.
+7. لو فشل OCR بالكامل، يظل السجل موجودًا مع صورة الوجه والبطاقة ويُعدل يدوياً من الأدمن.
+
+## واجهات الويب
+- `/login` تسجيل الدخول.
+- `/admin` لوحة الأدمن (تتطلب تسجيل الدخول).
+- `/debug` Manual Debug + الإعدادات (تتطلب تسجيل الدخول ثم PIN).
+- `/security` و `/settings` تُرجع 404 ولا تستخدم حالياً.
+
+## Manual Debug
+- يتطلب تسجيل دخول أدمن ثم إدخال `DEBUG_PIN`.
+- يعرض:
+- صورة البطاقة المرسلة ونسخة Document AI المصغرة.
+- صورة الوجه المستخرجة.
+- الحقول المكتشفة والـ timings.
+- مخرجات Document AI و Tesseract.
+
+## REST API (تطبيق الأمن)
+**Endpoint**
+- `POST /api/v1/security/scan-base64`
+
+**Headers**
+- `X-API-Key: <SECURITY_API_KEY>`
+
+**Body**
+```json
+{
+  "image_base64": "<base64 أو data:image/jpeg;base64,...>"
+}
+```
+
+**Response (نجاح)**
+```json
+{
+  "status": "allowed",
+  "message": "مسموح بالدخول",
+  "is_new": true
+}
+```
+
+**Response (محظور)**
+```json
+{
+  "status": "blocked",
+  "message": "هذا الشخص محظور من الدخول",
+  "reason": "سبب الحظر",
+  "is_new": false
+}
+```
+
+**Response (خطأ)**
+```json
+{
+  "status": "error",
+  "message": "فشل إيجاد بطاقة شخصية في الصورة. برجاء التأكد من التصوير بشكل صحيح"
+}
+```
+
+**أكواد الاستجابة**
+- `200` نجاح (`allowed` أو `blocked`).
+- `401` مفتاح API غير صحيح.
+- `422` خطأ في التعرف أو في البطاقة.
+- `429` تجاوز معدل الطلبات.
+- `400` صورة غير صالحة.
+
+## إعداد Google Document AI
+لتفعيل OCR عبر Document AI:
+1) ضع ملف service account وأشر إليه:
+```
+GOOGLE_APPLICATION_CREDENTIALS=/opt/gates/keys/docai-key.json
+```
+2) اضبط المعرفات:
+```
+DOC_AI_PROJECT_ID=hydepark-gate-keeper
+DOC_AI_PROJECT_NUMBER=82843412741
+DOC_AI_LOCATION=us
+DOC_AI_PROCESSOR_ID=4a6c7685906ef3c9
+```
+3) أنواع الـ Entities (لو تغيّرت في التدريب):
+```
+DOC_AI_NAME_TYPES=fullName
+DOC_AI_NID_TYPES=NationalID
+```
+4) جودة الصورة المرسلة لـ Document AI:
+```
+DOC_AI_MAX_DIM=1600
+DOC_AI_JPEG_QUALITY=85
+```
+
+## إعدادات من صفحة Debug
+هذه الإعدادات تحفظ في قاعدة البيانات وتؤثر مباشرة:
+- `docai_grayscale` تحويل الصورة إلى أبيض وأسود قبل الإرسال.
+- `docai_max_dim` أقصى بعد للصورة قبل الإرسال.
+- `docai_jpeg_quality` جودة JPEG للصور المرسلة.
+- `face_match_enabled` تفعيل/تعطيل مطابقة الوجه.
+- `face_match_threshold` عتبة التشابه.
+
+## التشغيل (Development)
 ```
 cd id_gate_mvp
 bash deploy.sh dev
 ```
-سيتم التشغيل على `http://<server-ip>:5000`.
+السيرفر يعمل على `http://<server-ip>:5000`.
 
-## تشغيل Production
+## التشغيل (Production)
 ```
 bash deploy.sh production
 ```
-سيتم تشغيل Gunicorn مع Uvicorn workers وتسجيل اللوجات داخل `data/logs/`.
-راجع `PRODUCTION.md` لتجهيز الإنتاج بالكامل.
-في وضع production سيتم تشغيل Redis (إذا لم يكن مضبوطًا) وتشغيل عامل RQ تلقائيًا بالخلفية.
+- يستخدم Gunicorn + Uvicorn workers.
+- اللوجات داخل `data/logs/`.
+- يشغّل Redis و RQ تلقائياً إن كان مفعلًا.
+- لو النظام يدعم systemd سيتم إنشاء خدمات دائمة تلقائياً.
 
-## تشغيل Worker (RQ)
-معالجة تسجيل الأشخاص الجدد تتم في الخلفية لتسريع رد تطبيق الموبايل.
+## الخدمات في Production (systemd)
+في حال `USE_SYSTEMD=1` سيتم إنشاء خدمات:
+- `gates-app`
+- `gates-rq`
 
-1. تأكد من تشغيل Redis أو فعّل:
+أوامر مفيدة:
 ```
-START_REDIS=1
+systemctl status gates-app
+systemctl status gates-rq
+systemctl restart gates-app gates-rq
 ```
-2. شغّل عامل RQ (في نافذة أخرى):
-```
-export REDIS_URL=redis://localhost:6379/0
-export RQ_QUEUE=gates
-rq worker gates
-```
-بدون Redis سيعمل النظام لكن التسجيل الخلفي سيتم داخل نفس السيرفر وقد يبطئ الاستجابة.
-في production يتم تشغيل العامل تلقائيًا عبر `deploy.sh`.
 
 ## قاعدة البيانات
-### PostgreSQL (Production)
-حدد متغير:
-```
-export DATABASE_URL=postgresql://user:pass@host:5432/gates_db
-```
-وعند التشغيل بـ:
-```
-bash deploy.sh production
-```
-سيتم استخدام PostgreSQL مباشرة.
+- في الإنتاج يتم استخدام PostgreSQL تلقائياً.
+- في التطوير يتم استخدام SQLite افتراضياً.
+- يمكن إجبار النوع عبر `DB_BACKEND=postgres` أو `DB_BACKEND=sqlite`.
+- PostgreSQL يُدار داخل Schema مستقل عبر `PG_SCHEMA` (افتراضي `gates`).
 
-### استخدام PostgreSQL في Development (اختياري)
-```
-export DB_BACKEND=postgres
-export DATABASE_URL=postgresql://user:pass@host:5432/gates_db
-bash deploy.sh dev
-```
-
-أو يمكن تشغيل PostgreSQL عبر Docker:
-```
-export START_POSTGRES=1
-export POSTGRES_DB=gates_db
-export POSTGRES_USER=gates
-export POSTGRES_PASSWORD=gatespass
-bash deploy.sh production
-```
-سيتم تشغيل حاوية `gates-postgres` وربطها تلقائيًا.
-
-### SQLite (Development فقط)
-```
-export APP_ENV=development
-bash deploy.sh dev
-```
-يتم استخدام `data/gate_dev.db` تلقائيًا.
-
-## إعداد Google Document AI (اختياري)
-لتفعيل Document AI بدل الـ OCR المحلي:
-
-1) ثبّت Service Account وضبط الاعتماد:
-```
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json
-```
-
-2) اضبط المتغيرات التالية:
-```
-export DOC_AI_PROJECT_ID=hydepark-gate-keeper
-export DOC_AI_PROJECT_NUMBER=82843412741
-export DOC_AI_LOCATION=us
-export DOC_AI_PROCESSOR_ID=4a6c7685906ef3c9
-```
-
-3) (اختياري) لو أسماء الـ entities مختلفة عن الافتراض:
-```
-export DOC_AI_NAME_TYPES=full_name,name,arabic_name
-export DOC_AI_NID_TYPES=national_id,nid,id_number
-```
-
-4) (اختياري) لتسريع الاستجابة بتقليل حجم الصورة المرسلة:
-```
-export DOC_AI_MAX_DIM=1600
-export DOC_AI_JPEG_QUALITY=85
-```
-
-## مطابقة الوجه
-- فعّلها من صفحة الإعدادات.
-- قيمة التشابه الافتراضية: `0.35` (Cosine Similarity).
-
-## إعدادات الأداء
-- `DOC_AI_MAX_DIM` و `DOC_AI_JPEG_QUALITY` يمكن ضبطهما من صفحة الإعدادات مباشرة.
-
-يمكنك استخدام ملف `.env` بدل التصدير اليدوي. راجع `.env.example`.
-
-## المسارات
-- `/login` تسجيل الدخول
-- `/admin` لوحة الأدمن (بعد تسجيل الدخول)
-- `/debug` Manual Debug + الإعدادات (يتطلب PIN بعد تسجيل الدخول)
-
-## REST API للأمن (تطبيق الموبايل)
-Endpoint:
-- `POST /api/v1/security/scan-base64`
-
-Headers:
-- `X-API-Key: <SECURITY_API_KEY>`
-
-Body (application/json):
-```
-{
-  "image_base64": "<base64 or data:image/jpeg;base64,...>"
-}
-```
-
-Response (مختصر لتطبيق الموبايل):
-```
-{
-  "status": "allowed|blocked|error",
-  "message": "مسموح بالدخول",
-  "is_new": true,
-  "reason": "سبب الحظر (لو blocked)"
-}
-```
-
-ملاحظة: الرد سريع (Face Match فقط)، وأي تسجيل جديد يتم استكماله في الخلفية.
-
-ملاحظة: لاستخدامه، عرّف المتغير `SECURITY_API_KEY` في السيرفر.
-راجع `AUTH.md` للتفاصيل الكاملة.
-
-## الدخول للويب
-- `/login` لتسجيل دخول الأدمن.
-- بيانات الدخول تُقرأ من `.env` عبر `ADMIN_USERNAME` و`ADMIN_PASSWORD`.
-- صفحة الـDebug تتطلب إدخال PIN (`DEBUG_PIN`) بعد تسجيل الدخول.
-
-## ملاحظات
-- النماذج موجودة داخل `models/`.
-- ملفات Tesseract المدربة داخل `tessdata/`.
-- قاعدة البيانات: `data/gate.db`.
-- صور الأفراد: `data/photos/`.
-- صور البطاقات: `data/cards/`.
+## المسارات والملفات
+- `data/photos/` صور الوجوه.
+- `data/cards/` صور البطاقة الأصلية والمقصوصة.
+- `data/raw/` رفع خام مؤقت (يُحذف بعد المعالجة).
+- `data/debug/` صور الـ Debug.
+- `data/logs/` لوجات السيرفر و RQ.
 
 ## متغيرات البيئة المهمة
-- `ADMIN_USERNAME` و `ADMIN_PASSWORD` لتسجيل دخول الأدمن.
-- `DEBUG_PIN` لفتح صفحة الـDebug بعد تسجيل الدخول.
-- `SESSION_SECRET` لتأمين جلسات الدخول.
-- `FACE_MAX_DIM` أقصى حجم لإدخال الوجه (افتراضي 640).
-- `FACE_DET_SIZE` حجم كاشف الوجوه (افتراضي 640).
-- `FACE_MIN_SCORE` أقل درجة قبول لاكتشاف الوجه (افتراضي 0.5).
-- `FACE_MAX_CANDIDATES` أقصى عدد مرشحين للمطابقة (افتراضي 50).
-- `CARD_AUTO_ROTATE` تدوير تلقائي لصورة البطاقة عند المعالجة (0 لتعطيله).
-- `REDIS_URL` عنوان Redis (مطلوب لـ RQ).
-- `RQ_QUEUE` اسم الـ Queue (افتراضي gates).
-- `RQ_JOB_TIMEOUT` أقصى وقت للوظيفة بالثواني.
-- `START_REDIS` لتثبيت وتشغيل Redis تلقائياً عبر `deploy.sh`.
+- `ADMIN_USERNAME`, `ADMIN_PASSWORD` بيانات الأدمن.
+- `DEBUG_PIN` رقم PIN للـ Debug.
+- `SESSION_SECRET` لتأمين الجلسات.
+- `SECURITY_API_KEY` مفتاح API لتطبيق الأمن.
+- `CARD_AUTO_ROTATE=0` تعطيل تدوير الصورة تلقائياً.
+- `REDIS_URL`, `RQ_QUEUE`, `RQ_JOB_TIMEOUT` لتشغيل الخلفية.
+- `START_REDIS=1` لتثبيت وتشغيل Redis عبر `deploy.sh`.
+- `USE_SYSTEMD=1` لتشغيل الخدمات تلقائياً بعد إعادة التشغيل.
+- `APP_ENV=production` لتفعيل PostgreSQL تلقائياً.
+
+## أمان وتشغيل موثوق
+- لا تشارك `.env` أو مفاتيح الخدمة.
+- فعّل HTTPS عبر Nginx أو أي Reverse Proxy خارجي.
+- راقب `data/logs/error.log` لأي أخطاء.
+- نفّذ نسخ احتياطي دوري لقاعدة البيانات والصور.

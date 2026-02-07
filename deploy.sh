@@ -43,6 +43,7 @@ MODE_ARG="${1:-}"
 MODE="${MODE_ARG:-${APP_ENV:-development}}"
 START_POSTGRES="${START_POSTGRES:-0}"
 START_REDIS="${START_REDIS:-}"
+USE_SYSTEMD="${USE_SYSTEMD:-}"
 
 if [[ "$MODE" == "prod" || "$MODE" == "production" ]]; then
   export APP_ENV="production"
@@ -56,6 +57,11 @@ if [ "$PRODUCTION" = "1" ] && [ -z "${START_REDIS}" ]; then
   START_REDIS=1
 fi
 START_REDIS="${START_REDIS:-0}"
+
+if [ "$PRODUCTION" = "1" ] && [ -z "${USE_SYSTEMD}" ] && command -v systemctl >/dev/null 2>&1; then
+  USE_SYSTEMD=1
+fi
+USE_SYSTEMD="${USE_SYSTEMD:-0}"
 
 if [ "$PRODUCTION" = "1" ]; then
   if [ -z "${DATABASE_URL:-}" ] && [ -z "${POSTGRES_URL:-}" ]; then
@@ -123,6 +129,62 @@ echo "[4/4] تشغيل السيرفر على بورت 5000..."
 export TESSDATA_PREFIX="$ROOT/tessdata"
 
 if [ "${PRODUCTION:-0}" = "1" ]; then
+  if [ "$USE_SYSTEMD" = "1" ] && command -v systemctl >/dev/null 2>&1; then
+    SERVICE_USER="$(id -un)"
+    APP_SERVICE="/etc/systemd/system/gates-app.service"
+    RQ_SERVICE="/etc/systemd/system/gates-rq.service"
+
+    echo "[SYSTEMD] إعداد خدمة Gates API..."
+    $SUDO tee "$APP_SERVICE" >/dev/null <<EOF
+[Unit]
+Description=Gates Hyde Park API
+After=network.target redis-server.service docker.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$ROOT
+EnvironmentFile=$ROOT/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$ROOT/.venv/bin/gunicorn app:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:5000 --workers \$WEB_CONCURRENCY --timeout 120 --keep-alive 5 --access-logfile $ROOT/data/logs/access.log --error-logfile $ROOT/data/logs/error.log --log-level \$LOG_LEVEL
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    echo "[SYSTEMD] إعداد خدمة RQ Worker..."
+    $SUDO tee "$RQ_SERVICE" >/dev/null <<EOF
+[Unit]
+Description=Gates Hyde Park RQ Worker
+After=network.target redis-server.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=$SERVICE_USER
+WorkingDirectory=$ROOT
+EnvironmentFile=$ROOT/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=$ROOT/.venv/bin/rq worker \$RQ_QUEUE
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable --now gates-app.service
+    if [ -n "${REDIS_URL:-}" ]; then
+      $SUDO systemctl enable --now gates-rq.service
+    fi
+    echo "[SYSTEMD] الخدمات شغالة: gates-app و gates-rq"
+    exit 0
+  fi
+
   WORKERS="${WEB_CONCURRENCY:-2}"
   LOG_LEVEL="${LOG_LEVEL:-info}"
   exec gunicorn app:app \
