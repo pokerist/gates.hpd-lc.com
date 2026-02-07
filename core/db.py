@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -13,6 +14,7 @@ except Exception:  # pragma: no cover - optional in dev
     psycopg2 = None
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+PG_SCHEMA_ENV = os.getenv("PG_SCHEMA", "gates")
 
 
 def _detect_backend() -> str:
@@ -52,6 +54,29 @@ def _pg_dsn() -> str:
     raise RuntimeError("DATABASE_URL غير مضبوط للـ PostgreSQL")
 
 
+def _pg_schema() -> str:
+    raw = (PG_SCHEMA_ENV or "public").strip()
+    if not raw:
+        return "gates"
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", raw):
+        return "gates"
+    return raw
+
+
+def _ensure_pg_schema(conn) -> None:
+    schema = _pg_schema()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+            cur.execute(f"SET search_path TO {schema}")
+    except Exception:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SET search_path TO public")
+        except Exception:
+            pass
+
+
 DB_PATH = _sqlite_path()
 
 
@@ -66,6 +91,7 @@ def get_connection():
         if psycopg2 is None:
             raise RuntimeError("psycopg2 غير مثبت")
         conn = psycopg2.connect(_pg_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
+        _ensure_pg_schema(conn)
         return conn
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
