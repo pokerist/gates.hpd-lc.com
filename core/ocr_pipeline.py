@@ -146,6 +146,40 @@ def _entity_text(entity: Any, doc_text: str) -> str:
     return ""
 
 
+def _entity_properties(entity: Any) -> List[Any]:
+    props = getattr(entity, "properties", None)
+    if props is None:
+        return []
+    return list(props)
+
+def _docai_property_priority(entity_type: str) -> int:
+    label = entity_type.lower()
+    if label in {"firstname", "first_name", "givenname", "fname"}:
+        return 0
+    if label in {"restname", "lastname", "last_name", "familyname", "surname", "lname", "secondname", "middlename"}:
+        return 1
+    return 2
+
+
+def _entity_text_with_properties(entity: Any, doc_text: str) -> str:
+    direct = _entity_text(entity, doc_text)
+    if direct:
+        return direct
+    props = _entity_properties(entity)
+    if not props:
+        return ""
+    ordered_props = sorted(
+        props,
+        key=lambda p: _docai_property_priority(getattr(p, "type_", "") or ""),
+    )
+    parts = []
+    for prop in ordered_props:
+        text = _entity_text(prop, doc_text)
+        if text:
+            parts.append(text)
+    return " ".join(parts).strip()
+
+
 def _pick_best_entity(entities: List[Any], candidates: List[str], doc_text: str) -> str:
     best_text = ""
     best_conf = -1.0
@@ -154,7 +188,7 @@ def _pick_best_entity(entities: List[Any], candidates: List[str], doc_text: str)
         if not _match_entity_type(entity_type, candidates):
             continue
         confidence = float(getattr(entity, "confidence", 0.0) or 0.0)
-        text = _entity_text(entity, doc_text).strip()
+        text = _entity_text_with_properties(entity, doc_text).strip()
         if text and confidence >= best_conf:
             best_conf = confidence
             best_text = text
@@ -169,11 +203,17 @@ def _encode_jpeg(image: np.ndarray, quality: int = 95) -> bytes:
 
 
 def _serialize_docai_entity(entity: Any, doc_text: str) -> Dict[str, Any]:
-    return {
+    item = {
         "type": getattr(entity, "type_", "") or "",
-        "text": _entity_text(entity, doc_text),
+        "text": _entity_text_with_properties(entity, doc_text),
         "confidence": float(getattr(entity, "confidence", 0.0) or 0.0),
     }
+    props = _entity_properties(entity)
+    if props:
+        item["properties"] = [
+            _serialize_docai_entity(prop, doc_text) for prop in props
+        ]
+    return item
 
 
 def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, Any]]:
@@ -209,6 +249,8 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, Any]]:
 
         result = client.process_document(request=request)
         doc_text = getattr(result.document, "text", "") or ""
+        if not doc_text:
+            print("[DOC-AI] Warning: document text is empty.")
         entities = list(getattr(result.document, "entities", []) or [])
         entity_items = [_serialize_docai_entity(entity, doc_text) for entity in entities]
 
@@ -231,8 +273,8 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, Any]]:
                 etype = getattr(e, "type_", "")
                 if not etype:
                     continue
-                text = _entity_text(e, doc_text)
-            preview.append(f"{etype}:{text[:40]}")
+                text = _entity_text_with_properties(e, doc_text)
+                preview.append(f"{etype}:{text[:40]}")
             print(f"[DOC-AI] No matching entities. Types seen: {entity_types} | Samples: {preview}")
             return None
 
