@@ -58,6 +58,11 @@ class CardNotFoundError(Exception):
     pass
 
 
+def _card_rotation_enabled() -> bool:
+    raw = os.getenv("CARD_AUTO_ROTATE", "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _ensure_models() -> None:
     global _id_card_model, _fields_model
 
@@ -510,19 +515,20 @@ def _prepare_card(image_bytes: bytes) -> Tuple[np.ndarray, List[Dict[str, Any]],
     image = _decode_image(image_bytes)
     card_bbox, card_conf = _detect_card_bbox(image)
     if not card_bbox:
-        best_conf = card_conf
-        best_bbox = None
-        best_image = None
-        for angle in (90, 180, 270):
-            rotated = _rotate_image(image, angle)
-            bbox, conf = _detect_card_bbox(rotated)
-            if bbox and conf > best_conf:
-                best_conf = conf
-                best_bbox = bbox
-                best_image = rotated
-        if best_bbox is not None and best_image is not None:
-            image = best_image
-            card_bbox = best_bbox
+        if _card_rotation_enabled():
+            best_conf = card_conf
+            best_bbox = None
+            best_image = None
+            for angle in (90, 180, 270):
+                rotated = _rotate_image(image, angle)
+                bbox, conf = _detect_card_bbox(rotated)
+                if bbox and conf > best_conf:
+                    best_conf = conf
+                    best_bbox = bbox
+                    best_image = rotated
+            if best_bbox is not None and best_image is not None:
+                image = best_image
+                card_bbox = best_bbox
     if card_bbox:
         card_image = _crop(image, card_bbox)
     else:
@@ -553,23 +559,24 @@ def _prepare_assets_timed(
     card_bbox, card_conf = _detect_card_bbox(image)
     rotation_used = 0
     if not card_bbox:
-        best_conf = card_conf
-        best_bbox = None
-        best_image = None
-        for angle in (90, 180, 270):
-            rotated = _rotate_image(image, angle)
-            bbox, conf = _detect_card_bbox(rotated)
-            if bbox:
-                print(f"[PIPELINE] Card detected after rotation {angle}° conf={conf:.2f}")
-            if bbox and conf > best_conf:
-                best_conf = conf
-                best_bbox = bbox
-                best_image = rotated
-                rotation_used = angle
-        if best_bbox is not None and best_image is not None:
-            image = best_image
-            card_bbox = best_bbox
-            card_conf = best_conf
+        if _card_rotation_enabled():
+            best_conf = card_conf
+            best_bbox = None
+            best_image = None
+            for angle in (90, 180, 270):
+                rotated = _rotate_image(image, angle)
+                bbox, conf = _detect_card_bbox(rotated)
+                if bbox:
+                    print(f"[PIPELINE] Card detected after rotation {angle}° conf={conf:.2f}")
+                if bbox and conf > best_conf:
+                    best_conf = conf
+                    best_bbox = bbox
+                    best_image = rotated
+                    rotation_used = angle
+            if best_bbox is not None and best_image is not None:
+                image = best_image
+                card_bbox = best_bbox
+                card_conf = best_conf
     timings["detect_card_ms"] = (perf_counter() - t0) * 1000
     if not card_bbox:
         raise CardNotFoundError("فشل إيجاد بطاقة شخصية في الصورة. برجاء التأكد من التصوير بشكل صحيح")
@@ -588,7 +595,7 @@ def _prepare_assets_timed(
         card_bbox = (0, 0, image.shape[1], image.shape[0])
 
     card_rotation = 0
-    if card_image.shape[0] > card_image.shape[1]:
+    if _card_rotation_enabled() and card_image.shape[0] > card_image.shape[1]:
         card_image = _rotate_image(card_image, 90)
         card_rotation = 90
     try:
@@ -602,7 +609,7 @@ def _prepare_assets_timed(
     t0 = perf_counter()
     fields = _detect_fields(card_image)
     timings["detect_fields_ms"] = (perf_counter() - t0) * 1000
-    if not fields:
+    if not fields and _card_rotation_enabled():
         best_fields = fields
         best_image = card_image
         best_rotation = 0
@@ -867,7 +874,7 @@ def run_security_scan(image_bytes: bytes, skip_face_match: bool = False) -> Scan
     timings["docai_ms"] = (perf_counter() - t0) * 1000
     full_name = (docai_payload.get("full_name") or "").strip()
     docai_nid = _normalize_digits(docai_payload.get("national_id") or "")
-    if len(docai_nid) > 14:
+    if len(docai_nid) != 14:
         docai_nid = ""
 
     tesseract_payload = {
@@ -875,34 +882,19 @@ def run_security_scan(image_bytes: bytes, skip_face_match: bool = False) -> Scan
         "national_id_raw": "",
     }
 
-    if docai_payload:
-        if len(docai_nid) < 14:
-            t0 = perf_counter()
-            tess_nid = _tesseract_nid_from_fields(card_image, fields)
-            timings["tesseract_nid_ms"] = (perf_counter() - t0) * 1000
-            if len(tess_nid) > 14:
-                tess_nid = ""
-            tesseract_payload["national_id_raw"] = tess_nid
-            if tess_nid and len(tess_nid) > len(docai_nid):
-                docai_nid = tess_nid
-        national_id = docai_nid
-    else:
+    if not docai_nid:
         t0 = perf_counter()
-        tesseract_full_name = _tesseract_name_from_fields(card_image, fields)
-        timings["tesseract_name_ms"] = (perf_counter() - t0) * 1000
-        t0 = perf_counter()
-        tesseract_nid_text = _tesseract_nid_from_fields(card_image, fields)
+        tess_nid = _tesseract_nid_from_fields(card_image, fields)
         timings["tesseract_nid_ms"] = (perf_counter() - t0) * 1000
-        if len(tesseract_nid_text) > 14:
-            tesseract_nid_text = ""
-        tesseract_payload = {
-            "full_name_raw": tesseract_full_name,
-            "national_id_raw": tesseract_nid_text,
-        }
-        full_name = tesseract_full_name
-        national_id = tesseract_nid_text
+        if len(tess_nid) != 14:
+            tess_nid = ""
+        tesseract_payload["national_id_raw"] = tess_nid
+        if tess_nid:
+            docai_nid = tess_nid
 
-    if tesseract_payload["national_id_raw"] or tesseract_payload["full_name_raw"]:
+    national_id = docai_nid
+
+    if tesseract_payload["national_id_raw"]:
         print("[OCR][tesseract]", tesseract_payload)
 
     ocr = OcrResult(
