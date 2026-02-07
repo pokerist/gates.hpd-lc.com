@@ -26,6 +26,7 @@ _id_card_model: Optional[YOLO] = None
 _fields_model: Optional[YOLO] = None
 _reader: Optional[easyocr.Reader] = None
 _tess_warned: set[str] = set()
+_docai_warned: bool = False
 
 
 @dataclass
@@ -74,11 +75,27 @@ def _tess_config(base_config: str = "") -> str:
 
 
 def _docai_settings() -> Optional[Dict[str, str]]:
+    global _docai_warned
     processor_id = os.getenv("DOC_AI_PROCESSOR_ID")
     project_id = os.getenv("DOC_AI_PROJECT_NUMBER") or os.getenv("DOC_AI_PROJECT_ID")
     location = os.getenv("DOC_AI_LOCATION", "us")
     if not processor_id or not project_id:
+        if not _docai_warned:
+            print("[DOC-AI] Disabled: missing DOC_AI_PROJECT_* or DOC_AI_PROCESSOR_ID.")
+            _docai_warned = True
         return None
+
+    creds_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+    if creds_path and not Path(creds_path).exists():
+        if not _docai_warned:
+            print(f"[DOC-AI] Credentials file not found: {creds_path}")
+            _docai_warned = True
+        return None
+
+    if not _docai_warned:
+        short_processor = processor_id[:6] + "..." + processor_id[-4:]
+        print(f"[DOC-AI] Enabled: project={project_id}, location={location}, processor={short_processor}")
+        _docai_warned = True
     return {
         "processor_id": processor_id,
         "project_id": project_id,
@@ -148,46 +165,52 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, str]]:
         print(f"[DOC-AI] Library not available: {exc}")
         return None
 
-    project_id = settings["project_id"]
-    location = settings["location"]
-    processor_id = settings["processor_id"]
+    try:
+        project_id = settings["project_id"]
+        location = settings["location"]
+        processor_id = settings["processor_id"]
 
-    client_options = {"api_endpoint": f"{location}-documentai.googleapis.com"}
-    client = documentai.DocumentProcessorServiceClient(client_options=client_options)
-    name = client.processor_path(project_id, location, processor_id)
+        client_options = {"api_endpoint": f"{location}-documentai.googleapis.com"}
+        client = documentai.DocumentProcessorServiceClient(client_options=client_options)
+        name = client.processor_path(project_id, location, processor_id)
 
-    raw_doc = documentai.RawDocument(
-        content=_encode_jpeg(card_image, quality=95),
-        mime_type="image/jpeg",
-    )
+        raw_doc = documentai.RawDocument(
+            content=_encode_jpeg(card_image, quality=95),
+            mime_type="image/jpeg",
+        )
 
-    request = documentai.ProcessRequest(
-        name=name,
-        raw_document=raw_doc,
-        skip_human_review=True,
-    )
+        request = documentai.ProcessRequest(
+            name=name,
+            raw_document=raw_doc,
+            skip_human_review=True,
+        )
 
-    result = client.process_document(request=request)
-    entities = list(getattr(result.document, "entities", []) or [])
+        result = client.process_document(request=request)
+        entities = list(getattr(result.document, "entities", []) or [])
 
-    name_candidates = _docai_candidates(
-        "DOC_AI_NAME_TYPES",
-        ["full_name", "fullname", "fullName", "name", "arabic_name", "person_name"],
-    )
-    nid_candidates = _docai_candidates(
-        "DOC_AI_NID_TYPES",
-        ["national_id", "nationalid", "nationalID", "nid", "id_number", "identity_number"],
-    )
+        name_candidates = _docai_candidates(
+            "DOC_AI_NAME_TYPES",
+            ["full_name", "fullname", "fullName", "name", "arabic_name", "person_name"],
+        )
+        nid_candidates = _docai_candidates(
+            "DOC_AI_NID_TYPES",
+            ["national_id", "nationalid", "nationalID", "nid", "id_number", "identity_number"],
+        )
 
-    full_name = _pick_best_entity(entities, name_candidates)
-    national_id = _normalize_digits(_pick_best_entity(entities, nid_candidates))
+        full_name = _pick_best_entity(entities, name_candidates)
+        national_id = _normalize_digits(_pick_best_entity(entities, nid_candidates))
 
-    if not full_name and not national_id:
+        if not full_name and not national_id:
+            entity_types = [getattr(e, "type_", "") for e in entities if getattr(e, "type_", "")]
+            print(f"[DOC-AI] No matching entities. Types seen: {entity_types}")
+            return None
+
+        payload = {"full_name": full_name, "national_id": national_id}
+        print("[OCR][docai]", payload)
+        return payload
+    except Exception as exc:
+        print(f"[DOC-AI] Failed to process document: {exc}")
         return None
-
-    payload = {"full_name": full_name, "national_id": national_id}
-    print("[OCR][docai]", payload)
-    return payload
 
 
 def _decode_image(image_bytes: bytes) -> np.ndarray:
