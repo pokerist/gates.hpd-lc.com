@@ -233,7 +233,7 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, Any]]:
                     continue
                 text = _entity_text(e, doc_text)
             preview.append(f"{etype}:{text[:40]}")
-            print(f\"[DOC-AI] No matching entities. Types seen: {entity_types} | Samples: {preview}\")
+            print(f"[DOC-AI] No matching entities. Types seen: {entity_types} | Samples: {preview}")
             return None
 
         payload = {
