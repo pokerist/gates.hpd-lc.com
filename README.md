@@ -37,6 +37,13 @@ bash deploy.sh production
 ```
 سيتم استخدام PostgreSQL مباشرة.
 
+### استخدام PostgreSQL في Development (اختياري)
+```
+export DB_BACKEND=postgres
+export DATABASE_URL=postgresql://user:pass@host:5432/gates_db
+bash deploy.sh dev
+```
+
 أو يمكن تشغيل PostgreSQL عبر Docker:
 ```
 export START_POSTGRES=1

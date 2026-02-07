@@ -19,8 +19,6 @@ def _detect_backend() -> str:
     forced = os.getenv("DB_BACKEND", "").strip().lower()
     if forced in {"sqlite", "postgres", "postgresql"}:
         return "postgres" if forced.startswith("post") else "sqlite"
-    if os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL"):
-        return "postgres"
     app_env = os.getenv("APP_ENV", "development").lower()
     if app_env in {"prod", "production"}:
         return "postgres"
@@ -33,7 +31,10 @@ DB_BACKEND = _detect_backend()
 def _sqlite_path() -> Path:
     app_env = os.getenv("APP_ENV", "development").lower()
     default_name = "gate_prod.db" if app_env in {"prod", "production"} else "gate_dev.db"
-    return Path(os.getenv("DB_PATH", str(BASE_DIR / "data" / default_name)))
+    env_path = os.getenv("DB_PATH")
+    if env_path and env_path.strip():
+        return Path(env_path)
+    return Path(str(BASE_DIR / "data" / default_name))
 
 
 def _pg_dsn() -> str:
