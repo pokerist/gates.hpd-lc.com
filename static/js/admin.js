@@ -247,7 +247,11 @@ function formatDate(value) {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   try {
-    return new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+    return new Intl.DateTimeFormat("ar-EG", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "Africa/Cairo"
+    }).format(parsed);
   } catch (err) {
     return parsed.toLocaleString();
   }
