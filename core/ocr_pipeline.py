@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from io import BytesIO
 from time import perf_counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 import pytesseract
+from PIL import Image, ImageOps
 from ultralytics import YOLO
 from core import settings as app_settings
 from core import face_match
@@ -279,6 +281,15 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, Any]]:
         name = client.processor_path(project_id, location, processor_id)
 
         docai_image = _prepare_docai_image(card_image)
+        try:
+            height, width = docai_image.shape[:2]
+            print(
+                "[DOC-AI] Input image size="
+                f"{width}x{height} gray={app_settings.get_docai_grayscale()} "
+                f"max_dim={_docai_max_dim()} jpeg_quality={_docai_jpeg_quality()}"
+            )
+        except Exception:
+            pass
         raw_doc = documentai.RawDocument(
             content=_encode_jpeg(docai_image, quality=_docai_jpeg_quality()),
             mime_type="image/jpeg",
@@ -334,10 +345,41 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, Any]]:
 
 
 def _decode_image(image_bytes: bytes) -> np.ndarray:
-    data = np.frombuffer(image_bytes, np.uint8)
-    image = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    if image is None:
-        raise ValueError("تعذر قراءة الصورة")
+    try:
+        pil_image = Image.open(BytesIO(image_bytes))
+        orientation = None
+        try:
+            orientation = pil_image.getexif().get(274)
+        except Exception:
+            orientation = None
+        pil_image = ImageOps.exif_transpose(pil_image)
+        if pil_image.mode == "RGBA":
+            pil_image = pil_image.convert("RGB")
+        elif pil_image.mode not in {"RGB", "L"}:
+            pil_image = pil_image.convert("RGB")
+
+        array = np.array(pil_image)
+        if array.ndim == 2:
+            array = cv2.cvtColor(array, cv2.COLOR_GRAY2RGB)
+        image = cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
+        if orientation:
+            print(f"[PIPELINE] EXIF orientation={orientation}")
+        return image
+    except Exception:
+        data = np.frombuffer(image_bytes, np.uint8)
+        image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError("تعذر قراءة الصورة")
+        return image
+
+
+def _rotate_image(image: np.ndarray, angle: int) -> np.ndarray:
+    if angle == 90:
+        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    if angle == 180:
+        return cv2.rotate(image, cv2.ROTATE_180)
+    if angle == 270:
+        return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
     return image
 
 
@@ -381,12 +423,12 @@ def _prep_for_tesseract(image: np.ndarray) -> np.ndarray:
     return binary
 
 
-def _detect_card_bbox(image: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
+def _detect_card_bbox(image: np.ndarray) -> Tuple[Optional[Tuple[int, int, int, int]], float]:
     if _id_card_model is None:
-        return None
+        return None, 0.0
     results = _id_card_model(image, verbose=False)[0]
     if results.boxes is None or len(results.boxes) == 0:
-        return None
+        return None, 0.0
     best = None
     best_conf = -1.0
     for box in results.boxes:
@@ -395,7 +437,7 @@ def _detect_card_bbox(image: np.ndarray) -> Optional[Tuple[int, int, int, int]]:
         if conf > best_conf:
             best_conf = conf
             best = (x1, y1, x2, y2)
-    return best
+    return best, max(best_conf, 0.0)
 
 
 def _detect_fields(card_image: np.ndarray) -> List[Dict[str, Any]]:
@@ -466,7 +508,21 @@ def _tesseract_nid_from_fields(card_image: np.ndarray, fields: List[Dict[str, An
 def _prepare_card(image_bytes: bytes) -> Tuple[np.ndarray, List[Dict[str, Any]], Tuple[int, int, int, int]]:
     _ensure_models()
     image = _decode_image(image_bytes)
-    card_bbox = _detect_card_bbox(image)
+    card_bbox, card_conf = _detect_card_bbox(image)
+    if not card_bbox:
+        best_conf = card_conf
+        best_bbox = None
+        best_image = None
+        for angle in (90, 180, 270):
+            rotated = _rotate_image(image, angle)
+            bbox, conf = _detect_card_bbox(rotated)
+            if bbox and conf > best_conf:
+                best_conf = conf
+                best_bbox = bbox
+                best_image = rotated
+        if best_bbox is not None and best_image is not None:
+            image = best_image
+            card_bbox = best_bbox
     if card_bbox:
         card_image = _crop(image, card_bbox)
     else:
@@ -487,12 +543,43 @@ def _prepare_assets_timed(
     t0 = perf_counter()
     image = _decode_image(image_bytes)
     timings["decode_ms"] = (perf_counter() - t0) * 1000
+    try:
+        height, width = image.shape[:2]
+        print(f"[PIPELINE] Decoded image size={width}x{height} bytes={len(image_bytes)}")
+    except Exception:
+        pass
 
     t0 = perf_counter()
-    card_bbox = _detect_card_bbox(image)
+    card_bbox, card_conf = _detect_card_bbox(image)
+    rotation_used = 0
+    if not card_bbox:
+        best_conf = card_conf
+        best_bbox = None
+        best_image = None
+        for angle in (90, 180, 270):
+            rotated = _rotate_image(image, angle)
+            bbox, conf = _detect_card_bbox(rotated)
+            if bbox:
+                print(f"[PIPELINE] Card detected after rotation {angle}° conf={conf:.2f}")
+            if bbox and conf > best_conf:
+                best_conf = conf
+                best_bbox = bbox
+                best_image = rotated
+                rotation_used = angle
+        if best_bbox is not None and best_image is not None:
+            image = best_image
+            card_bbox = best_bbox
+            card_conf = best_conf
     timings["detect_card_ms"] = (perf_counter() - t0) * 1000
     if not card_bbox:
         raise CardNotFoundError("فشل إيجاد بطاقة شخصية في الصورة. برجاء التأكد من التصوير بشكل صحيح")
+    try:
+        print(
+            "[PIPELINE] Card bbox="
+            f"{card_bbox} conf={card_conf:.2f} rotation={rotation_used}"
+        )
+    except Exception:
+        pass
 
     if card_bbox:
         card_image = _crop(image, card_bbox)
@@ -503,6 +590,13 @@ def _prepare_assets_timed(
     t0 = perf_counter()
     fields = _detect_fields(card_image)
     timings["detect_fields_ms"] = (perf_counter() - t0) * 1000
+    if fields:
+        preview = ", ".join(
+            f"{field.get('label')}:{field.get('conf', 0.0):.2f}" for field in fields[:6]
+        )
+        print(f"[PIPELINE] Fields detected={len(fields)} [{preview}]")
+    else:
+        print("[PIPELINE] Fields detected=0")
 
     t0 = perf_counter()
     photo = _extract_photo_region(card_image, fields)
