@@ -101,7 +101,14 @@ def get_connection():
 def _execute(query: str, params: Sequence[Any] = ()) -> int:
     with get_connection() as conn:
         cur = conn.cursor()
-        cur.execute(_sql(query), params)
+        try:
+            cur.execute(_sql(query), params)
+        except Exception as exc:
+            if DB_BACKEND == "postgres":
+                pgcode = getattr(exc, "pgcode", "")
+                if pgcode in {"23505", "42710", "42P07"}:
+                    return 0
+            raise
         return getattr(cur, "rowcount", 0) or 0
 
 
