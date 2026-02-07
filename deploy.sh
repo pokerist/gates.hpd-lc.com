@@ -50,6 +50,7 @@ FIREWALL_ALLOW_PORTS="${FIREWALL_ALLOW_PORTS:-22,80,443,5000}"
 LOGROTATE_ENABLE="${LOGROTATE_ENABLE:-}"
 RAW_RETENTION_DAYS="${RAW_RETENTION_DAYS:-2}"
 DEBUG_RETENTION_DAYS="${DEBUG_RETENTION_DAYS:-30}"
+AUTO_INSTALL_DOCKER="${AUTO_INSTALL_DOCKER:-}"
 
 if [[ "$MODE" == "prod" || "$MODE" == "production" ]]; then
   export APP_ENV="production"
@@ -125,9 +126,37 @@ if [ -n "${DEBUG_RETENTION_DAYS}" ]; then
   fi
 fi
 
+if [ "$PRODUCTION" = "1" ] && [ -z "${AUTO_INSTALL_DOCKER}" ]; then
+  AUTO_INSTALL_DOCKER=1
+fi
+AUTO_INSTALL_DOCKER="${AUTO_INSTALL_DOCKER:-0}"
+
+ensure_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "$AUTO_INSTALL_DOCKER" != "1" ]; then
+    return 1
+  fi
+  echo "[DB] تثبيت Docker..."
+  $SUDO apt-get install -y docker.io docker-compose-plugin
+  if command -v systemctl >/dev/null 2>&1; then
+    $SUDO systemctl enable --now docker || true
+  else
+    $SUDO service docker start || true
+  fi
+  return 0
+}
+
 if [ "$PRODUCTION" = "1" ]; then
   if [ -z "${DATABASE_URL:-}" ] && [ -z "${POSTGRES_URL:-}" ]; then
-    if [ "$START_POSTGRES" = "1" ] && command -v docker >/dev/null 2>&1; then
+    if [ "$START_POSTGRES" = "1" ]; then
+      if ! command -v docker >/dev/null 2>&1; then
+        if ! ensure_docker; then
+          echo "[DB] Docker غير مثبت. فعّل AUTO_INSTALL_DOCKER=1 أو ثبّته يدوياً."
+          exit 1
+        fi
+      fi
       POSTGRES_PORT="${POSTGRES_PORT:-5432}"
       if command -v ss >/dev/null 2>&1; then
         if ss -lnt | awk '{print $4}' | grep -q ":${POSTGRES_PORT}$"; then
@@ -142,7 +171,17 @@ if [ "$PRODUCTION" = "1" ]; then
         fi
       fi
       echo "[DB] تشغيل PostgreSQL عبر Docker..."
-      docker compose -f "$ROOT/docker-compose.yml" up -d
+      DOCKER_COMPOSE="docker compose"
+      if ! docker compose version >/dev/null 2>&1; then
+        if command -v docker-compose >/dev/null 2>&1; then
+          DOCKER_COMPOSE="docker-compose"
+        else
+          if [ "$AUTO_INSTALL_DOCKER" = "1" ]; then
+            $SUDO apt-get install -y docker-compose-plugin
+          fi
+        fi
+      fi
+      $DOCKER_COMPOSE -f "$ROOT/docker-compose.yml" up -d
       POSTGRES_DB="${POSTGRES_DB:-gates_db}"
       POSTGRES_USER="${POSTGRES_USER:-gates}"
       POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-gatespass}"

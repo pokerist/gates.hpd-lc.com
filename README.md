@@ -170,6 +170,7 @@ systemctl restart gates-app gates-rq
 - `REDIS_URL`, `RQ_QUEUE`, `RQ_JOB_TIMEOUT` لتشغيل الخلفية.
 - `START_REDIS=1` لتثبيت وتشغيل Redis عبر `deploy.sh`.
 - `USE_SYSTEMD=1` لتشغيل الخدمات تلقائياً بعد إعادة التشغيل.
+- `AUTO_INSTALL_DOCKER=1` لتثبيت Docker تلقائياً عند تشغيل PostgreSQL عبر Docker.
 - `HARDENING_ENABLE=1` لتفعيل إعدادات الأمان التلقائية في الإنتاج.
 - `FIREWALL_ENABLE=1` لتفعيل UFW.
 - `FIREWALL_ALLOW_PORTS=22,80,443,5000` المنافذ المسموحة.
