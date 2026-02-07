@@ -24,6 +24,18 @@ POSTGRES_PASSWORD=gatespass
 bash deploy.sh production
 ```
 
+## تشغيل الخلفية (Redis/RQ)
+لتسريع استجابة تطبيق الموبايل، شغّل Redis ثم عامل RQ:
+```
+START_REDIS=1
+```
+ثم في جلسة أخرى:
+```
+export REDIS_URL=redis://localhost:6379/0
+export RQ_QUEUE=gates
+rq worker gates
+```
+
 ## Rate Limiting
 الإعدادات في `.env`:
 ```
@@ -36,7 +48,7 @@ TRUST_PROXY=1
 ## نقاط التحقق
 - `/api/health` يرجع `ok`
 - `/admin` يعمل بدون أخطاء
-- `/api/v1/security/scan` محمي بـ `X-API-Key`
+- `/api/v1/security/scan-base64` محمي بـ `X-API-Key`
 
 ## ملاحظات مهمة
 - لا يوجد migrations في النظام.

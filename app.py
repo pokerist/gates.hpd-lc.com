@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
-import uuid
 import os
 import datetime
 import base64
@@ -11,21 +10,20 @@ import time
 from collections import deque
 from threading import Lock
 
-import cv2
-import numpy as np
-
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from pydantic import BaseModel
-import sqlite3
 
 from core import db
 from core import settings as app_settings
 from core.ocr_pipeline import prepare_debug_artifacts, run_face_match_scan, run_security_scan
 from core import face_match
+from core import media
+from core import queue as rq_queue
+from core import tasks as background_tasks_runner
 
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "1") == "1"
 RATE_LIMIT_WINDOW_SEC = int(os.getenv("RATE_LIMIT_WINDOW_SEC", "60"))
@@ -39,18 +37,15 @@ DEBUG_PIN = os.getenv("DEBUG_PIN", "1150445")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-session-secret")
 PRODUCTION = os.getenv("PRODUCTION", "0") == "1"
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = media.BASE_DIR
 STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
-DATA_DIR = BASE_DIR / "data"
-DEBUG_DIR = DATA_DIR / "debug"
-PHOTO_DIR = DATA_DIR / "photos"
-CARD_DIR = DATA_DIR / "cards"
+DATA_DIR = media.DATA_DIR
+DEBUG_DIR = media.DEBUG_DIR
+PHOTO_DIR = media.PHOTO_DIR
+CARD_DIR = media.CARD_DIR
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-PHOTO_DIR.mkdir(parents=True, exist_ok=True)
-CARD_DIR.mkdir(parents=True, exist_ok=True)
+media.ensure_dirs()
 
 app = FastAPI(title="بوابة التحقق من بطاقة الرقم القومي", version="1.0.0")
 app.add_middleware(
@@ -101,49 +96,12 @@ class DebugPinRequest(BaseModel):
 
 @app.on_event("startup")
 def on_startup() -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-    PHOTO_DIR.mkdir(parents=True, exist_ok=True)
-    CARD_DIR.mkdir(parents=True, exist_ok=True)
+    media.ensure_dirs()
     db.init_db()
     try:
         face_match.warm_up()
     except Exception as exc:
         print(f"[FACE] Warm-up failed: {exc}")
-
-
-def _save_person_photo(photo_image, national_id: str) -> str:
-    PHOTO_DIR.mkdir(parents=True, exist_ok=True)
-    safe_id = "".join(ch for ch in national_id if ch.isdigit())
-    filename = f"{safe_id}_{uuid.uuid4().hex[:8]}.jpg"
-    output_path = PHOTO_DIR / filename
-    cv2.imwrite(str(output_path), photo_image)
-    return filename
-
-
-def _save_card_image(card_image, national_id: str) -> str:
-    CARD_DIR.mkdir(parents=True, exist_ok=True)
-    safe_id = "".join(ch for ch in national_id if ch.isdigit()) or "unknown"
-    filename = f"{safe_id}_{uuid.uuid4().hex[:8]}.jpg"
-    output_path = CARD_DIR / filename
-    cv2.imwrite(str(output_path), card_image)
-    return filename
-
-
-def _save_original_card_image(image_bytes: bytes) -> Optional[str]:
-    CARD_DIR.mkdir(parents=True, exist_ok=True)
-    data = np.frombuffer(image_bytes, np.uint8)
-    image = cv2.imdecode(data, cv2.IMREAD_COLOR)
-    if image is None:
-        return None
-    filename = f"orig_{uuid.uuid4().hex[:10]}.jpg"
-    output_path = CARD_DIR / filename
-    cv2.imwrite(str(output_path), image)
-    return filename
-
-
-def _generate_temp_nid() -> str:
-    return f"TEMP-{uuid.uuid4().hex[:12]}"
 
 
 def _require_api_key(request: Request) -> None:
@@ -155,10 +113,6 @@ def _require_api_key(request: Request) -> None:
         raise HTTPException(status_code=401, detail="مفتاح API غير صحيح")
 
 
-def _serialize_embedding(embedding) -> Optional[bytes]:
-    if embedding is None:
-        return None
-    return face_match.serialize_embedding(embedding)
 
 
 def _decode_base64_image(value: str) -> bytes:
@@ -173,6 +127,24 @@ def _decode_base64_image(value: str) -> bytes:
         return base64.b64decode(payload, validate=True)
     except (binascii.Error, ValueError):
         raise HTTPException(status_code=400, detail="Base64 غير صالح")
+
+
+def _cleanup_raw_file(raw_path: Optional[str]) -> None:
+    if not raw_path:
+        return
+    try:
+        Path(raw_path).unlink()
+    except Exception:
+        pass
+
+
+def _cleanup_card_file(card_filename: Optional[str]) -> None:
+    if not card_filename:
+        return
+    try:
+        (CARD_DIR / card_filename).unlink()
+    except Exception:
+        pass
 
 
 def _client_ip(request: Request) -> str:
@@ -214,7 +186,7 @@ def _require_debug_access(request: Request) -> None:
 
 
 def _process_scan(image_bytes: bytes) -> dict:
-    original_card_filename = _save_original_card_image(image_bytes)
+    original_card_filename = media.save_original_card_image(image_bytes)
     scan = run_security_scan(image_bytes)
     if scan.error:
         return {
@@ -252,10 +224,10 @@ def _process_scan(image_bytes: bytes) -> dict:
         photo_filename = None
         card_filename = original_card_filename
         if scan.photo_image is not None:
-            photo_filename = _save_person_photo(scan.photo_image, nid)
+            photo_filename = media.save_person_photo(scan.photo_image, nid)
         if card_filename is None and scan.card_image is not None:
-            card_filename = _save_card_image(scan.card_image, nid)
-        embedding_blob = _serialize_embedding(scan.face_embedding)
+            card_filename = media.save_card_image(scan.card_image, nid)
+        embedding_blob = media.serialize_embedding(scan.face_embedding)
 
         db.increment_visit(nid)
         if photo_filename or card_filename or embedding_blob:
@@ -265,8 +237,6 @@ def _process_scan(image_bytes: bytes) -> dict:
                 card_path=card_filename,
                 face_embedding=embedding_blob,
             )
-            if embedding_blob:
-                face_match.mark_index_dirty()
             if embedding_blob:
                 face_match.mark_index_dirty()
         person = db.get_person_by_nid(nid) or matched_person
@@ -299,16 +269,16 @@ def _process_scan(image_bytes: bytes) -> dict:
                 "ocr": {"full_name": full_name, "national_id": national_id},
                 "source": "ocr",
             }
-        national_id = _generate_temp_nid()
+        national_id = media.generate_temp_nid()
 
     person = db.get_person_by_nid(national_id)
     photo_filename = None
     card_filename = original_card_filename
     if scan.photo_image is not None:
-        photo_filename = _save_person_photo(scan.photo_image, national_id)
+        photo_filename = media.save_person_photo(scan.photo_image, national_id)
     if card_filename is None and scan.card_image is not None:
-        card_filename = _save_card_image(scan.card_image, national_id)
-    embedding_blob = _serialize_embedding(scan.face_embedding)
+        card_filename = media.save_card_image(scan.card_image, national_id)
+    embedding_blob = media.serialize_embedding(scan.face_embedding)
 
     if person:
         if person["blocked"]:
@@ -369,64 +339,21 @@ def _process_scan(image_bytes: bytes) -> dict:
     }
 
 
-def _register_person_async(image_bytes: bytes, original_card_filename: Optional[str]) -> None:
-    scan = run_security_scan(image_bytes)
-    if scan.error:
-        print(f"[ASYNC] OCR failed: {scan.error}")
-        return
-    if scan.photo_image is None:
-        print("[ASYNC] No face photo extracted, skipping registration.")
-        return
-
-    full_name = (scan.ocr.full_name or "").strip()
-    national_id = (scan.ocr.national_id or "").strip()
-    if len(national_id) != 14:
-        national_id = ""
-    if not national_id:
-        national_id = _generate_temp_nid()
-
-    photo_filename = _save_person_photo(scan.photo_image, national_id)
-    card_filename = original_card_filename
-    if card_filename is None and scan.card_image is not None:
-        card_filename = _save_card_image(scan.card_image, national_id)
-    embedding_blob = _serialize_embedding(scan.face_embedding)
-
-    person = db.get_person_by_nid(national_id)
-    if person:
-        db.increment_visit(national_id)
-        db.update_name_if_missing(national_id, full_name)
-        if photo_filename or card_filename or embedding_blob:
-            db.update_media(
-                national_id,
-                photo_path=photo_filename,
-                card_path=card_filename,
-                face_embedding=embedding_blob,
-            )
-            if embedding_blob:
-                face_match.mark_index_dirty()
-        return
-
-    db.add_person(
-        national_id,
-        full_name,
-        photo_filename,
-        card_filename,
-        embedding_blob,
-    )
-    if embedding_blob:
-        face_match.mark_index_dirty()
-
-
 def _process_scan_external(image_bytes: bytes, background_tasks: Optional[BackgroundTasks]) -> dict:
-    original_card_filename = _save_original_card_image(image_bytes)
+    raw_path = media.save_raw_upload(image_bytes)
+    original_card_filename = media.save_original_card_image(image_bytes)
     scan = run_face_match_scan(image_bytes)
     if scan.error:
+        _cleanup_raw_file(raw_path)
+        _cleanup_card_file(original_card_filename)
         return {
             "status": "error",
             "message": scan.error,
             "timings": scan.timings,
         }
     if scan.photo_image is None:
+        _cleanup_raw_file(raw_path)
+        _cleanup_card_file(original_card_filename)
         return {
             "status": "error",
             "message": "لم يتم استخراج صورة واضحة من البطاقة",
@@ -437,16 +364,18 @@ def _process_scan_external(image_bytes: bytes, background_tasks: Optional[Backgr
         person = match_info.get("person") or {}
         nid = person.get("national_id") or ""
         if not nid:
+            _cleanup_raw_file(raw_path)
+            _cleanup_card_file(original_card_filename)
             return {
                 "status": "error",
                 "message": "تعذر تحديد الرقم القومي",
             }
 
-        photo_filename = _save_person_photo(scan.photo_image, nid)
+        photo_filename = media.save_person_photo(scan.photo_image, nid)
         card_filename = original_card_filename
         if card_filename is None and scan.card_image is not None:
-            card_filename = _save_card_image(scan.card_image, nid)
-        embedding_blob = _serialize_embedding(scan.face_embedding)
+            card_filename = media.save_card_image(scan.card_image, nid)
+        embedding_blob = media.serialize_embedding(scan.face_embedding)
         db.increment_visit(nid)
         if photo_filename or card_filename or embedding_blob:
             db.update_media(
@@ -455,9 +384,12 @@ def _process_scan_external(image_bytes: bytes, background_tasks: Optional[Backgr
                 card_path=card_filename,
                 face_embedding=embedding_blob,
             )
+            if embedding_blob:
+                face_match.mark_index_dirty()
         person = db.get_person_by_nid(nid) or person
 
         if person.get("blocked"):
+            _cleanup_raw_file(raw_path)
             return {
                 "status": "blocked",
                 "message": "هذا الشخص محظور من الدخول",
@@ -465,16 +397,23 @@ def _process_scan_external(image_bytes: bytes, background_tasks: Optional[Backgr
                 "is_new": False,
             }
 
+        _cleanup_raw_file(raw_path)
         return {
             "status": "allowed",
             "message": "مسموح بالدخول",
             "is_new": False,
         }
 
-    if background_tasks is not None:
-        background_tasks.add_task(_register_person_async, image_bytes, original_card_filename)
-    else:
-        _register_person_async(image_bytes, original_card_filename)
+    job_id = rq_queue.enqueue_registration(raw_path, original_card_filename)
+    if job_id is None:
+        if background_tasks is not None:
+            background_tasks.add_task(
+                background_tasks_runner.register_person_job,
+                raw_path,
+                original_card_filename,
+            )
+        else:
+            background_tasks_runner.register_person_job(raw_path, original_card_filename)
 
     return {
         "status": "allowed",

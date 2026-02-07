@@ -9,7 +9,8 @@
 - مطابقة وجه محلية (InsightFace / ArcFace) لتقليل تكلفة Document AI.
 - لوج تفصيلي في الكونسول لنتائج OCR.
 - تخزين صورة البطاقة الشخصية وإظهارها في لوحة الأدمن.
-- قاعدة بيانات SQLite لإدارة الدخول والحظر.
+- معالجة خلفية عبر Redis/RQ لتسريع الاستجابة عند تسجيل أشخاص جدد.
+- دعم SQLite و PostgreSQL لإدارة الدخول والحظر.
 
 ## التشغيل على Ubuntu
 ```
@@ -24,6 +25,21 @@ bash deploy.sh production
 ```
 سيتم تشغيل Gunicorn مع Uvicorn workers وتسجيل اللوجات داخل `data/logs/`.
 راجع `PRODUCTION.md` لتجهيز الإنتاج بالكامل.
+
+## تشغيل Worker (RQ)
+معالجة تسجيل الأشخاص الجدد تتم في الخلفية لتسريع رد تطبيق الموبايل.
+
+1. تأكد من تشغيل Redis أو فعّل:
+```
+START_REDIS=1
+```
+2. شغّل عامل RQ (في نافذة أخرى):
+```
+export REDIS_URL=redis://localhost:6379/0
+export RQ_QUEUE=gates
+rq worker gates
+```
+بدون Redis سيعمل النظام لكن التسجيل الخلفي سيتم داخل نفس السيرفر وقد يبطئ الاستجابة.
 
 ## قاعدة البيانات
 ### PostgreSQL (Production)
@@ -110,9 +126,6 @@ Endpoint:
 Headers:
 - `X-API-Key: <SECURITY_API_KEY>`
 
-Body (multipart/form-data):
-- `image`: ملف الصورة
-
 Body (application/json):
 ```
 {
@@ -155,3 +168,7 @@ Response (مختصر لتطبيق الموبايل):
 - `FACE_DET_SIZE` حجم كاشف الوجوه (افتراضي 640).
 - `FACE_MIN_SCORE` أقل درجة قبول لاكتشاف الوجه (افتراضي 0.5).
 - `FACE_MAX_CANDIDATES` أقصى عدد مرشحين للمطابقة (افتراضي 50).
+- `REDIS_URL` عنوان Redis (مطلوب لـ RQ).
+- `RQ_QUEUE` اسم الـ Queue (افتراضي gates).
+- `RQ_JOB_TIMEOUT` أقصى وقت للوظيفة بالثواني.
+- `START_REDIS` لتثبيت وتشغيل Redis تلقائياً عبر `deploy.sh`.

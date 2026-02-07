@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
 import os
@@ -12,6 +13,8 @@ from insightface.app import FaceAnalysis
 from core import db
 
 EMBEDDING_DIM = 512
+BASE_DIR = Path(__file__).resolve().parent.parent
+INDEX_VERSION_FILE = BASE_DIR / "data" / "face_index.version"
 
 FACE_MAX_DIM = int(os.getenv("FACE_MAX_DIM", "640"))
 FACE_DET_SIZE_RAW = os.getenv("FACE_DET_SIZE", "640")
@@ -22,6 +25,7 @@ _cache_lock = Lock()
 _embedding_matrix: Optional[np.ndarray] = None
 _embedding_people: List[Dict[str, Any]] = []
 _index_dirty = True
+_index_version_mtime = 0.0
 
 
 def _parse_det_size(value: str) -> Tuple[int, int]:
@@ -123,12 +127,33 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def mark_index_dirty() -> None:
-    global _index_dirty
+    global _index_dirty, _index_version_mtime
     _index_dirty = True
+    try:
+        INDEX_VERSION_FILE.parent.mkdir(parents=True, exist_ok=True)
+        INDEX_VERSION_FILE.touch()
+        _index_version_mtime = INDEX_VERSION_FILE.stat().st_mtime
+    except Exception:
+        pass
+
+
+def _get_index_version_mtime() -> float:
+    try:
+        return INDEX_VERSION_FILE.stat().st_mtime
+    except Exception:
+        return 0.0
+
+
+def _refresh_index_state() -> None:
+    global _index_dirty, _index_version_mtime
+    current = _get_index_version_mtime()
+    if current > _index_version_mtime:
+        _index_dirty = True
+        _index_version_mtime = current
 
 
 def _build_embedding_cache() -> None:
-    global _embedding_matrix, _embedding_people, _index_dirty
+    global _embedding_matrix, _embedding_people, _index_dirty, _index_version_mtime
     people = db.get_people_with_embeddings()
     embeddings: List[np.ndarray] = []
     people_list: List[Dict[str, Any]] = []
@@ -148,11 +173,13 @@ def _build_embedding_cache() -> None:
         _embedding_matrix = None
         _embedding_people = []
     _index_dirty = False
+    _index_version_mtime = _get_index_version_mtime()
 
 
 def warm_up() -> None:
     _get_face_app()
     with _cache_lock:
+        _refresh_index_state()
         if _index_dirty:
             _build_embedding_cache()
 
@@ -162,6 +189,7 @@ def find_best_match(embedding: np.ndarray, threshold: float) -> Optional[Tuple[D
     if embedding is None:
         return None
     with _cache_lock:
+        _refresh_index_state()
         if _index_dirty:
             _build_embedding_cache()
         matrix = _embedding_matrix

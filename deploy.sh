@@ -42,6 +42,7 @@ fi
 MODE_ARG="${1:-}"
 MODE="${MODE_ARG:-${APP_ENV:-development}}"
 START_POSTGRES="${START_POSTGRES:-0}"
+START_REDIS="${START_REDIS:-0}"
 
 if [[ "$MODE" == "prod" || "$MODE" == "production" ]]; then
   export APP_ENV="production"
@@ -61,6 +62,19 @@ if [ "$PRODUCTION" = "1" ]; then
       echo "[DB] DATABASE_URL غير مضبوط. اضبطه أو فعّل START_POSTGRES=1."
       exit 1
     fi
+  fi
+fi
+
+if [ "$START_REDIS" = "1" ]; then
+  echo "[CACHE] تثبيت وتشغيل Redis..."
+  $SUDO apt-get install -y redis-server
+  if command -v systemctl >/dev/null 2>&1; then
+    $SUDO systemctl enable --now redis-server || true
+  else
+    $SUDO service redis-server start || true
+  fi
+  if [ -z "${REDIS_URL:-}" ]; then
+    export REDIS_URL="redis://localhost:6379/0"
   fi
 fi
 
