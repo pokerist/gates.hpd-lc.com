@@ -4,8 +4,12 @@ from pathlib import Path
 from typing import Optional
 import uuid
 import os
+import datetime
+import base64
+import binascii
 
 import cv2
+import numpy as np
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -65,6 +69,10 @@ class UpdatePersonRequest(BaseModel):
     new_national_id: Optional[str] = None
 
 
+class Base64ScanRequest(BaseModel):
+    image_base64: str
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -92,6 +100,18 @@ def _save_card_image(card_image, national_id: str) -> str:
     return filename
 
 
+def _save_original_card_image(image_bytes: bytes) -> Optional[str]:
+    CARD_DIR.mkdir(parents=True, exist_ok=True)
+    data = np.frombuffer(image_bytes, np.uint8)
+    image = cv2.imdecode(data, cv2.IMREAD_COLOR)
+    if image is None:
+        return None
+    filename = f"orig_{uuid.uuid4().hex[:10]}.jpg"
+    output_path = CARD_DIR / filename
+    cv2.imwrite(str(output_path), image)
+    return filename
+
+
 def _require_api_key(request: Request) -> None:
     expected = os.getenv("SECURITY_API_KEY")
     if not expected:
@@ -107,7 +127,22 @@ def _serialize_embedding(embedding) -> Optional[bytes]:
     return face_match.serialize_embedding(embedding)
 
 
+def _decode_base64_image(value: str) -> bytes:
+    if not value:
+        raise HTTPException(status_code=400, detail="بيانات الصورة فارغة")
+    payload = value.strip()
+    if payload.startswith("data:"):
+        comma_index = payload.find(",")
+        if comma_index != -1:
+            payload = payload[comma_index + 1 :]
+    try:
+        return base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="Base64 غير صالح")
+
+
 def _process_scan(image_bytes: bytes) -> dict:
+    original_card_filename = _save_original_card_image(image_bytes)
     scan = run_security_scan(image_bytes)
     ocr = scan.ocr
     national_id = (ocr.national_id or "").strip()
@@ -127,10 +162,10 @@ def _process_scan(image_bytes: bytes) -> dict:
             }
 
         photo_filename = None
-        card_filename = None
+        card_filename = original_card_filename
         if scan.photo_image is not None:
             photo_filename = _save_person_photo(scan.photo_image, nid)
-        if scan.card_image is not None:
+        if card_filename is None and scan.card_image is not None:
             card_filename = _save_card_image(scan.card_image, nid)
         embedding_blob = _serialize_embedding(scan.face_embedding)
 
@@ -174,10 +209,10 @@ def _process_scan(image_bytes: bytes) -> dict:
 
     person = db.get_person_by_nid(national_id)
     photo_filename = None
-    card_filename = None
+    card_filename = original_card_filename
     if scan.photo_image is not None:
         photo_filename = _save_person_photo(scan.photo_image, national_id)
-    if scan.card_image is not None:
+    if card_filename is None and scan.card_image is not None:
         card_filename = _save_card_image(scan.card_image, national_id)
     embedding_blob = _serialize_embedding(scan.face_embedding)
 
@@ -308,6 +343,16 @@ async def security_scan_api(request: Request, image: UploadFile = File(...)):
     return payload
 
 
+@app.post("/api/v1/security/scan-base64")
+def security_scan_base64(request: Request, payload: Base64ScanRequest):
+    _require_api_key(request)
+    image_bytes = _decode_base64_image(payload.image_base64)
+    result = _process_scan(image_bytes)
+    if result["status"] == "error":
+        return JSONResponse(result, status_code=422)
+    return result
+
+
 @app.post("/api/debug")
 async def debug_scan(image: UploadFile = File(...)):
     if image.content_type and not image.content_type.startswith("image/"):
@@ -367,6 +412,11 @@ def update_settings(payload: SettingsRequest):
 def list_people(q: Optional[str] = None):
     people = db.search_people(q)
     return {"items": people}
+
+
+@app.get("/api/health")
+def health_check():
+    return {"status": "ok", "time": datetime.datetime.utcnow().isoformat() + "Z"}
 
 
 @app.post("/api/admin/block")

@@ -418,6 +418,7 @@ canvas {
   border-bottom: 1px solid var(--border);
   text-align: right;
   font-size: 0.95rem;
+  vertical-align: middle;
 }
 
 .table th {
@@ -440,6 +441,100 @@ canvas {
 .badge.allowed {
   background: rgba(34, 197, 94, 0.15);
   color: #bbf7d0;
+}
+
+.action-group {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(2, 6, 23, 0.5);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.icon-btn svg {
+  width: 18px;
+  height: 18px;
+  stroke: var(--text);
+}
+
+.icon-btn:hover {
+  border-color: rgba(56, 189, 248, 0.5);
+  transform: translateY(-1px);
+}
+
+.icon-btn.danger {
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.icon-btn.danger svg {
+  stroke: #fecaca;
+}
+
+.icon-btn.success {
+  border-color: rgba(34, 197, 94, 0.5);
+}
+
+.icon-btn.success svg {
+  stroke: #bbf7d0;
+}
+
+.preview-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.65);
+  z-index: 40;
+}
+
+.preview-panel {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(420px, 92vw);
+  background: rgba(8, 12, 24, 0.98);
+  border-right: 1px solid var(--border);
+  padding: 20px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow);
+}
+
+.preview-panel img {
+  width: 100%;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  object-fit: contain;
+  background: #020617;
+  flex: 1;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.preview-close {
+  padding: 8px 14px;
+  font-size: 0.9rem;
+}
+
+.hidden {
+  display: none !important;
 }
 
 input[type="text"],

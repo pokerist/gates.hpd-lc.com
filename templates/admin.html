@@ -35,6 +35,15 @@
     </table>
   </div>
 </section>
+
+<div id="cardPreviewBackdrop" class="preview-backdrop hidden"></div>
+<aside id="cardPreviewPanel" class="preview-panel hidden" aria-hidden="true">
+  <div class="preview-header">
+    <h3>صورة البطاقة</h3>
+    <button class="btn btn-outline preview-close" id="cardPreviewClose">إغلاق</button>
+  </div>
+  <img id="cardPreviewImage" alt="card preview" />
+</aside>
 {% endblock %}
 
 {% block scripts %}

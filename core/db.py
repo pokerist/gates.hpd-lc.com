@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import datetime
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "data" / "gate.db"
+APP_ENV = os.getenv("APP_ENV", "development").lower()
+DEFAULT_DB_NAME = "gate_prod.db" if APP_ENV in {"prod", "production"} else "gate_dev.db"
+DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "data" / DEFAULT_DB_NAME)))
 
 
 def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
@@ -52,18 +55,6 @@ def init_db() -> None:
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_people_name ON people(full_name);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_people_nid ON people(national_id);")
-        try:
-            conn.execute("ALTER TABLE people ADD COLUMN photo_path TEXT;")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            conn.execute("ALTER TABLE people ADD COLUMN card_path TEXT;")
-        except sqlite3.OperationalError:
-            pass
-        try:
-            conn.execute("ALTER TABLE people ADD COLUMN face_embedding BLOB;")
-        except sqlite3.OperationalError:
-            pass
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS settings (

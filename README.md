@@ -14,9 +14,24 @@
 ## التشغيل على Ubuntu
 ```
 cd id_gate_mvp
-bash deploy.sh
+bash deploy.sh dev
 ```
 سيتم التشغيل على `http://<server-ip>:5000`.
+
+## تشغيل Production
+```
+bash deploy.sh production
+```
+سيتم تشغيل Gunicorn مع Uvicorn workers وتسجيل اللوجات داخل `data/logs/`.
+
+## قاعدة البيانات
+- Development: `data/gate_dev.db`
+- Production: `data/gate_prod.db`
+
+يمكنك تحديد المسار يدويًا عبر:
+```
+export DB_PATH=/custom/path/to/db.sqlite
+```
 
 ## إعداد Google Document AI (اختياري)
 لتفعيل Document AI بدل الـ OCR المحلي:
@@ -65,6 +80,7 @@ export DOC_AI_JPEG_QUALITY=85
 ## REST API للأمن (تطبيق الموبايل)
 Endpoint:
 - `POST /api/v1/security/scan`
+- `POST /api/v1/security/scan-base64`
 
 Headers:
 - `X-API-Key: <SECURITY_API_KEY>`
@@ -72,7 +88,15 @@ Headers:
 Body (multipart/form-data):
 - `image`: ملف الصورة
 
+Body (application/json):
+```
+{
+  "image_base64": "<base64 or data:image/jpeg;base64,...>"
+}
+```
+
 ملاحظة: لاستخدامه، عرّف المتغير `SECURITY_API_KEY` في السيرفر.
+راجع `AUTH.md` للتفاصيل الكاملة.
 
 ## ملاحظات
 - النماذج موجودة داخل `models/`.
