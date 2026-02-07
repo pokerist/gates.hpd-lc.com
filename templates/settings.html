@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card hero">
+  <h2>الإعدادات</h2>
+  <p>تحكم سريع في إعدادات تحسين الأداء والدقة.</p>
+</section>
+
+<section class="card">
+  <div class="settings-list">
+    <div class="settings-row">
+      <div class="settings-meta">
+        <h3>تحويل صورة Document AI لأبيض وأسود</h3>
+        <p>يقلل حجم الصورة ويرفع سرعة المعالجة، مع الحفاظ على جودة النص.</p>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="docaiGrayscaleToggle" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="settings-row">
+      <div class="settings-meta">
+        <h3>تفعيل مطابقة الوجه</h3>
+        <p>يفحص صورة الوجه محلياً لتقليل تكلفة Document AI وتسريع القرار.</p>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="faceMatchToggle" />
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="settings-row">
+      <div class="settings-meta">
+        <h3>قوة الشبه المطلوبة</h3>
+        <p>كلما زادت القيمة، زادت الدقة وقلت المطابقات الخاطئة.</p>
+      </div>
+      <div class="range-control">
+        <input type="range" id="faceMatchThreshold" min="0.2" max="0.9" step="0.01" />
+        <span id="faceMatchThresholdValue">0.35</span>
+      </div>
+    </div>
+  </div>
+  <div id="settingsStatus" class="settings-status"></div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/settings.js"></script>
+{% endblock %}

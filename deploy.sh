@@ -25,7 +25,7 @@ echo "[3/4] تثبيت الحزم..."
 python -m pip install --upgrade pip
 python -m pip install -r "$ROOT/requirements.txt"
 
-mkdir -p "$ROOT/data" "$ROOT/data/debug" "$ROOT/data/photos"
+mkdir -p "$ROOT/data" "$ROOT/data/debug" "$ROOT/data/photos" "$ROOT/data/cards"
 
 if [ -f "$ROOT/.env" ]; then
   set -a

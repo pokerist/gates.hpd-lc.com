@@ -5,7 +5,8 @@ python-multipart==0.0.9
 opencv-python-headless>=4.9.0.80
 numpy>=1.23.0
 pillow>=10.0.0
-easyocr>=1.7.1
 ultralytics>=8.3.0
 pytesseract>=0.3.10
 google-cloud-documentai>=2.26.0
+insightface>=0.7.3
+onnxruntime>=1.16.0

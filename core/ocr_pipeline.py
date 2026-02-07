@@ -11,7 +11,8 @@ import cv2
 import numpy as np
 import pytesseract
 from ultralytics import YOLO
-import easyocr
+from core import settings as app_settings
+from core import face_match
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = BASE_DIR / "models"
@@ -24,7 +25,6 @@ FIELD_MODEL_PATH = MODEL_DIR / "detect_odjects.pt"
 
 _id_card_model: Optional[YOLO] = None
 _fields_model: Optional[YOLO] = None
-_reader: Optional[easyocr.Reader] = None
 _tess_warned: set[str] = set()
 _docai_warned: bool = False
 
@@ -33,16 +33,24 @@ _docai_warned: bool = False
 class OcrResult:
     full_name: str
     national_id: str
-    easyocr_raw: Dict[str, Any]
     tesseract_raw: Dict[str, Any]
     debug: Dict[str, Any]
 
 
-def _ensure_models() -> None:
-    global _id_card_model, _fields_model, _reader
+@dataclass
+class ScanResult:
+    ocr: OcrResult
+    photo_image: Optional[np.ndarray]
+    card_image: np.ndarray
+    fields: List[Dict[str, Any]]
+    card_bbox: Tuple[int, int, int, int]
+    docai: Dict[str, Any]
+    face_match: Optional[Dict[str, Any]]
+    face_embedding: Optional[np.ndarray]
 
-    if _reader is None:
-        _reader = easyocr.Reader(["ar"], gpu=False)
+
+def _ensure_models() -> None:
+    global _id_card_model, _fields_model
 
     if _id_card_model is None:
         _id_card_model = YOLO(str(ID_CARD_MODEL_PATH))
@@ -202,6 +210,36 @@ def _encode_jpeg(image: np.ndarray, quality: int = 95) -> bytes:
     return buffer.tobytes()
 
 
+def _docai_max_dim() -> int:
+    raw = os.getenv("DOC_AI_MAX_DIM", "1600")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 1600
+    return max(640, min(value, 3000))
+
+
+def _docai_jpeg_quality() -> int:
+    raw = os.getenv("DOC_AI_JPEG_QUALITY", "85")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = 85
+    return max(50, min(value, 95))
+
+
+def _resize_for_docai(image: np.ndarray) -> np.ndarray:
+    max_dim = _docai_max_dim()
+    h, w = image.shape[:2]
+    longest = max(h, w)
+    if longest <= max_dim:
+        return image
+    scale = max_dim / float(longest)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+
 def _serialize_docai_entity(entity: Any, doc_text: str) -> Dict[str, Any]:
     item = {
         "type": getattr(entity, "type_", "") or "",
@@ -236,8 +274,11 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, Any]]:
         client = documentai.DocumentProcessorServiceClient(client_options=client_options)
         name = client.processor_path(project_id, location, processor_id)
 
+        docai_image = _resize_for_docai(card_image)
+        if app_settings.get_docai_grayscale():
+            docai_image = cv2.cvtColor(docai_image, cv2.COLOR_BGR2GRAY)
         raw_doc = documentai.RawDocument(
-            content=_encode_jpeg(card_image, quality=95),
+            content=_encode_jpeg(docai_image, quality=_docai_jpeg_quality()),
             mime_type="image/jpeg",
         )
 
@@ -325,16 +366,6 @@ def _best_box(boxes: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return sorted(boxes, key=lambda b: b.get("conf", 0), reverse=True)[0]
 
 
-def _easyocr_text(image: np.ndarray) -> str:
-    if _reader is None:
-        return ""
-    try:
-        results = _reader.readtext(image, detail=0, paragraph=True)
-        return " ".join(results).strip()
-    except Exception:
-        return ""
-
-
 def _tesseract_text(image: np.ndarray, lang: str, config: str = "") -> str:
     try:
         return pytesseract.image_to_string(image, lang=lang, config=_tess_config(config)).strip()
@@ -383,6 +414,51 @@ def _detect_fields(card_image: np.ndarray) -> List[Dict[str, Any]]:
             "conf": conf,
         })
     return boxes
+
+
+def _collect_name_fields(fields: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    name_labels = {
+        "firstname",
+        "lastname",
+        "middlename",
+        "fullname",
+        "name",
+        "firstName",
+        "lastName",
+        "secondName",
+    }
+    name_lookup = {label.lower() for label in name_labels}
+    name_fields: List[Dict[str, Any]] = []
+    for field in fields:
+        label = field["label"]
+        if label.lower() in name_lookup:
+            name_fields.append({
+                "priority": _name_priority(label),
+                "x": field["bbox"][0],
+                "bbox": field["bbox"],
+            })
+    return name_fields
+
+
+def _tesseract_nid_from_fields(card_image: np.ndarray, fields: List[Dict[str, Any]]) -> str:
+    nid_candidates = [f for f in fields if f["label"].lower() in {"nid", "id", "nationalid", "national_id"}]
+    nid_field = _best_box(nid_candidates)
+    if nid_field:
+        nid_crop = _crop(card_image, nid_field["bbox"])
+        tess_nid_lang = _tess_lang("ara_number")
+        nid_text = _tesseract_text(
+            _prep_for_tesseract(nid_crop),
+            lang=tess_nid_lang,
+            config="--psm 7 -c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩",
+        )
+    else:
+        tess_nid_lang = _tess_lang("ara_number")
+        nid_text = _tesseract_text(
+            _prep_for_tesseract(card_image),
+            lang=tess_nid_lang,
+            config="--psm 6 -c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩",
+        )
+    return _normalize_digits(nid_text)
 
 
 def _prepare_card(image_bytes: bytes) -> Tuple[np.ndarray, List[Dict[str, Any]], Tuple[int, int, int, int]]:
@@ -464,65 +540,16 @@ def _extract_photo_region(card_image: np.ndarray, fields: List[Dict[str, Any]]) 
     return None
 
 
+def prepare_assets(image_bytes: bytes) -> Tuple[np.ndarray, List[Dict[str, Any]], Tuple[int, int, int, int], Optional[np.ndarray]]:
+    card_image, fields, card_bbox = _prepare_card(image_bytes)
+    photo = _extract_photo_region(card_image, fields)
+    return card_image, fields, card_bbox, photo
+
+
 def _process(image_bytes: bytes, include_tess_name: bool = False) -> Tuple[OcrResult, np.ndarray, List[Dict[str, Any]]]:
     card_image, fields, card_bbox = _prepare_card(image_bytes)
-
-    name_labels = {
-        "firstname",
-        "lastname",
-        "middlename",
-        "fullname",
-        "name",
-        "firstName",
-        "lastName",
-        "secondName",
-    }
-    name_lookup = {label.lower() for label in name_labels}
-
-    name_parts: List[Dict[str, Any]] = []
-    name_fields: List[Dict[str, Any]] = []
-    nid_candidates = [f for f in fields if f["label"].lower() in {"nid", "id", "nationalid", "national_id"}]
-
-    for field in fields:
-        label = field["label"]
-        if label.lower() in name_lookup:
-            name_fields.append({
-                "priority": _name_priority(label),
-                "x": field["bbox"][0],
-                "bbox": field["bbox"],
-            })
-            crop = _crop(card_image, field["bbox"])
-            text = _easyocr_text(crop)
-            if text:
-                name_parts.append({
-                    "priority": _name_priority(label),
-                    "x": field["bbox"][0],
-                    "text": text,
-                })
-
-    easyocr_name_raw = _normalize_name_parts(name_parts)
-
-    nid_field = _best_box(nid_candidates)
-    nid_text = ""
-    tesseract_nid_text = ""
-
-    if nid_field:
-        nid_crop = _crop(card_image, nid_field["bbox"])
-        tess_nid_lang = _tess_lang("ara_number")
-        tesseract_nid_text = _tesseract_text(
-            _prep_for_tesseract(nid_crop),
-            lang=tess_nid_lang,
-            config="--psm 7 -c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩",
-        )
-    else:
-        tess_nid_lang = _tess_lang("ara_number")
-        tesseract_nid_text = _tesseract_text(
-            _prep_for_tesseract(card_image),
-            lang=tess_nid_lang,
-            config="--psm 6 -c tessedit_char_whitelist=0123456789٠١٢٣٤٥٦٧٨٩",
-        )
-
-    tesseract_nid_text = _normalize_digits(tesseract_nid_text)
+    name_fields = _collect_name_fields(fields)
+    tesseract_nid_text = _tesseract_nid_from_fields(card_image, fields)
     nid_text = tesseract_nid_text
 
     tesseract_full_name = ""
@@ -543,12 +570,7 @@ def _process(image_bytes: bytes, include_tess_name: bool = False) -> Tuple[OcrRe
                     "text": text,
                 })
         tesseract_full_name = _normalize_name_parts(tess_parts)
-    full_name = easyocr_name_raw
-
-    easyocr_payload = {
-        "full_name_raw": easyocr_name_raw,
-        "national_id_raw": "",
-    }
+    full_name = tesseract_full_name
 
     tesseract_payload = {
         "full_name_raw": tesseract_full_name,
@@ -560,14 +582,12 @@ def _process(image_bytes: bytes, include_tess_name: bool = False) -> Tuple[OcrRe
         "fields": fields,
     }
 
-    print("[OCR][easyocr]", easyocr_payload)
     print("[OCR][tesseract]", tesseract_payload)
 
     return (
         OcrResult(
             full_name=full_name,
             national_id=nid_text,
-            easyocr_raw=easyocr_payload,
             tesseract_raw=tesseract_payload,
             debug=debug_payload,
         ),
@@ -581,26 +601,125 @@ def run_ocr(image_bytes: bytes) -> OcrResult:
     return result
 
 
-def run_ocr_with_photo(image_bytes: bytes) -> Tuple[OcrResult, Optional[np.ndarray]]:
-    card_image, fields, card_bbox = _prepare_card(image_bytes)
-    photo = _extract_photo_region(card_image, fields)
-
-    docai_payload = _docai_extract_fields(card_image)
-    if docai_payload:
-        local_result, _, _ = _process(image_bytes, include_tess_name=False)
-        full_name = docai_payload.get("full_name") or local_result.full_name
-        national_id = docai_payload.get("national_id") or local_result.national_id
-        result = OcrResult(
-            full_name=full_name,
-            national_id=national_id,
-            easyocr_raw=local_result.easyocr_raw,
-            tesseract_raw=local_result.tesseract_raw,
-            debug={"card_bbox": card_bbox, "fields": fields},
+def _tesseract_name_from_fields(card_image: np.ndarray, fields: List[Dict[str, Any]]) -> str:
+    name_fields = _collect_name_fields(fields)
+    if not name_fields:
+        return ""
+    tess_name_lang = _tess_lang("ara_combined")
+    tess_parts: List[Dict[str, Any]] = []
+    for field in name_fields:
+        crop = _crop(card_image, field["bbox"])
+        text = _tesseract_text(
+            _prep_for_tesseract(crop),
+            lang=tess_name_lang,
+            config="--psm 7",
         )
-        return result, photo
+        if text:
+            tess_parts.append({
+                "priority": field["priority"],
+                "x": field["x"],
+                "text": text,
+            })
+    return _normalize_name_parts(tess_parts)
 
-    result, _, _ = _process(image_bytes, include_tess_name=False)
-    return result, photo
+
+def run_security_scan(image_bytes: bytes) -> ScanResult:
+    card_image, fields, card_bbox, photo = prepare_assets(image_bytes)
+    face_match_info = None
+    face_embedding = None
+
+    if app_settings.get_face_match_enabled() and photo is not None:
+        face_embedding = face_match.extract_face_embedding(photo)
+        if face_embedding is not None:
+            threshold = app_settings.get_face_match_threshold()
+            match = face_match.find_best_match(face_embedding, threshold)
+            if match:
+                person, score = match
+                print(f"[FACE] Match score={score:.3f} nid={person.get('national_id')}")
+                person_payload = {
+                    "national_id": person.get("national_id"),
+                    "full_name": person.get("full_name"),
+                    "blocked": person.get("blocked"),
+                    "block_reason": person.get("block_reason"),
+                    "visits": person.get("visits"),
+                    "created_at": person.get("created_at"),
+                    "last_seen_at": person.get("last_seen_at"),
+                    "photo_path": person.get("photo_path"),
+                    "card_path": person.get("card_path"),
+                }
+                face_match_info = {
+                    "matched": True,
+                    "score": score,
+                    "person": person_payload,
+                }
+                ocr = OcrResult(
+                    full_name=person_payload.get("full_name") or "",
+                    national_id=person_payload.get("national_id") or "",
+                    tesseract_raw={},
+                    debug={"card_bbox": card_bbox, "fields": fields},
+                )
+                return ScanResult(
+                    ocr=ocr,
+                    photo_image=photo,
+                    card_image=card_image,
+                    fields=fields,
+                    card_bbox=card_bbox,
+                    docai={},
+                    face_match=face_match_info,
+                    face_embedding=face_embedding,
+                )
+
+    docai_payload = _docai_extract_fields(card_image) or {}
+    full_name = (docai_payload.get("full_name") or "").strip()
+    docai_nid = _normalize_digits(docai_payload.get("national_id") or "")
+
+    tesseract_payload = {
+        "full_name_raw": "",
+        "national_id_raw": "",
+    }
+
+    if docai_payload:
+        if len(docai_nid) < 14:
+            tess_nid = _tesseract_nid_from_fields(card_image, fields)
+            tesseract_payload["national_id_raw"] = tess_nid
+            if len(tess_nid) > len(docai_nid):
+                docai_nid = tess_nid
+        national_id = docai_nid
+    else:
+        tesseract_full_name = _tesseract_name_from_fields(card_image, fields)
+        tesseract_nid_text = _tesseract_nid_from_fields(card_image, fields)
+        tesseract_payload = {
+            "full_name_raw": tesseract_full_name,
+            "national_id_raw": tesseract_nid_text,
+        }
+        full_name = tesseract_full_name
+        national_id = tesseract_nid_text
+
+    if tesseract_payload["national_id_raw"] or tesseract_payload["full_name_raw"]:
+        print("[OCR][tesseract]", tesseract_payload)
+
+    ocr = OcrResult(
+        full_name=full_name,
+        national_id=national_id,
+        tesseract_raw=tesseract_payload,
+        debug={"card_bbox": card_bbox, "fields": fields},
+    )
+
+    return ScanResult(
+        ocr=ocr,
+        photo_image=photo,
+        card_image=card_image,
+        fields=fields,
+        card_bbox=card_bbox,
+        docai=docai_payload,
+        face_match=face_match_info,
+        face_embedding=face_embedding,
+    )
+
+
+def run_ocr_with_photo(image_bytes: bytes) -> Tuple[OcrResult, Optional[np.ndarray]]:
+    scan = run_security_scan(image_bytes)
+    return scan.ocr, scan.photo_image
 
 
 def save_debug_image(card_image: np.ndarray, fields: List[Dict[str, Any]]) -> str:
@@ -622,7 +741,6 @@ def prepare_debug_artifacts(image_bytes: bytes) -> Dict[str, Any]:
         "file_id": file_id,
         "card_bbox": card_bbox,
         "fields": fields,
-        "easyocr": result.easyocr_raw,
         "tesseract": result.tesseract_raw,
         "docai": docai_payload or {},
         "docai_entities": (docai_payload or {}).get("entities", []),

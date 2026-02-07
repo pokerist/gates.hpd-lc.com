@@ -14,7 +14,7 @@ function renderTable(items) {
   tableBody.innerHTML = "";
   if (!items.length) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="6">لا توجد نتائج</td>`;
+    row.innerHTML = `<td colspan="9">لا توجد نتائج</td>`;
     tableBody.appendChild(row);
     return;
   }
@@ -29,8 +29,15 @@ function renderTable(items) {
       ? `<img src="/person-photos/${person.photo_path}" alt="photo" style="width:48px;height:60px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,0.2);" />`
       : `<div style="width:48px;height:60px;border-radius:10px;border:1px dashed rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:rgba(255,255,255,0.5);">—</div>`;
 
+    const cardCell = person.card_path
+      ? `<img src="/card-images/${person.card_path}" alt="card" style="width:80px;height:52px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,0.2);" />`
+      : `<div style="width:80px;height:52px;border-radius:10px;border:1px dashed rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:rgba(255,255,255,0.5);">—</div>`;
+
+    const safeName = encodeURIComponent(person.full_name || "");
+
     row.innerHTML = `
       <td>${photoCell}</td>
+      <td>${cardCell}</td>
       <td>${person.full_name || "—"}</td>
       <td>${person.national_id}</td>
       <td>${statusBadge}</td>
@@ -38,6 +45,9 @@ function renderTable(items) {
       <td>${person.visits ?? 0}</td>
       <td>${person.last_seen_at || "—"}</td>
       <td>
+        <button class="btn btn-outline" data-action="edit" data-nid="${person.national_id}" data-name="${safeName}">
+          تعديل
+        </button>
         <button class="btn btn-secondary" data-action="toggle" data-nid="${person.national_id}">
           ${person.blocked ? "إلغاء الحظر" : "حظر"}
         </button>
@@ -83,6 +93,23 @@ tableBody.addEventListener("click", async (event) => {
   if (action === "toggle") {
     const isBlocked = button.textContent.includes("إلغاء");
     await toggleBlock(nid, isBlocked);
+  }
+
+  if (action === "edit") {
+    const currentName = decodeURIComponent(button.getAttribute("data-name") || "");
+    const newName = prompt("الاسم الكامل:", currentName);
+    if (newName === null) return;
+    const newNid = prompt("الرقم القومي (اتركه كما هو لو بدون تغيير):", nid);
+    if (newNid === null) return;
+    await fetch("/api/admin/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        national_id: nid,
+        full_name: newName,
+        new_national_id: newNid && newNid.trim() ? newNid.trim() : undefined
+      })
+    });
   }
 
   if (action === "delete") {

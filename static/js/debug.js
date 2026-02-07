@@ -5,7 +5,6 @@ const switchBtn = document.getElementById("debugSwitchBtn");
 const fileInput = document.getElementById("debugFileInput");
 const debugImage = document.getElementById("debugImage");
 const debugFinal = document.getElementById("debugFinal");
-const debugEasy = document.getElementById("debugEasy");
 const debugTess = document.getElementById("debugTess");
 const debugFields = document.getElementById("debugFields");
 const debugDocai = document.getElementById("debugDocai");
@@ -215,7 +214,6 @@ async function captureFrame() {
 async function sendImage(blob) {
   if (!blob) return;
   debugFinal.innerHTML = "جاري التحليل...";
-  debugEasy.innerHTML = "";
   debugTess.innerHTML = "";
   debugFields.innerHTML = "";
   debugDocai.innerHTML = "";
@@ -239,7 +237,6 @@ function renderDebug(data) {
   }
 
   const fields = data.fields || [];
-  const easy = data.easyocr || {};
   const tess = data.tesseract || {};
   const final = data.final || {};
   const docaiEntities = data.docai_entities || [];
@@ -247,10 +244,6 @@ function renderDebug(data) {
   debugFinal.innerHTML = `
     <div class="field-item"><strong>الاسم:</strong> <span>${final.full_name || "—"}</span></div>
     <div class="field-item"><strong>الرقم القومي:</strong> <span>${final.national_id || "—"}</span></div>
-  `;
-
-  debugEasy.innerHTML = `
-    <div class="field-item"><strong>الاسم الخام:</strong> <span>${easy.full_name_raw || "—"}</span></div>
   `;
 
   debugTess.innerHTML = `
