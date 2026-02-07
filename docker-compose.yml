@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: gates-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-gates_db}
+      POSTGRES_USER: ${POSTGRES_USER:-gates}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gatespass}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - gates_pg_data:/var/lib/postgresql/data
+
+volumes:
+  gates_pg_data:

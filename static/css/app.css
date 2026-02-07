@@ -512,13 +512,24 @@ canvas {
   box-shadow: var(--shadow);
 }
 
+.preview-body {
+  display: grid;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.preview-block h4 {
+  margin-bottom: 8px;
+  font-size: 1rem;
+  color: var(--muted);
+}
+
 .preview-panel img {
   width: 100%;
   border-radius: 16px;
   border: 1px solid var(--border);
   object-fit: contain;
   background: #020617;
-  flex: 1;
 }
 
 .preview-header {

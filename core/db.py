@@ -4,36 +4,128 @@ import datetime
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+try:
+    import psycopg2
+    import psycopg2.extras
+except Exception:  # pragma: no cover - optional in dev
+    psycopg2 = None
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-APP_ENV = os.getenv("APP_ENV", "development").lower()
-DEFAULT_DB_NAME = "gate_prod.db" if APP_ENV in {"prod", "production"} else "gate_dev.db"
-DB_PATH = Path(os.getenv("DB_PATH", str(BASE_DIR / "data" / DEFAULT_DB_NAME)))
 
 
-def _row_to_dict(row: sqlite3.Row) -> Dict[str, Any]:
-    return {
-        "id": row["id"],
-        "national_id": row["national_id"],
-        "full_name": row["full_name"],
-        "blocked": bool(row["blocked"]),
-        "block_reason": row["block_reason"],
-        "visits": row["visits"],
-        "created_at": row["created_at"],
-        "last_seen_at": row["last_seen_at"],
-        "photo_path": row["photo_path"],
-        "card_path": row["card_path"],
-    }
+def _detect_backend() -> str:
+    forced = os.getenv("DB_BACKEND", "").strip().lower()
+    if forced in {"sqlite", "postgres", "postgresql"}:
+        return "postgres" if forced.startswith("post") else "sqlite"
+    if os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL"):
+        return "postgres"
+    app_env = os.getenv("APP_ENV", "development").lower()
+    if app_env in {"prod", "production"}:
+        return "postgres"
+    return "sqlite"
 
 
-def get_connection() -> sqlite3.Connection:
+DB_BACKEND = _detect_backend()
+
+
+def _sqlite_path() -> Path:
+    app_env = os.getenv("APP_ENV", "development").lower()
+    default_name = "gate_prod.db" if app_env in {"prod", "production"} else "gate_dev.db"
+    return Path(os.getenv("DB_PATH", str(BASE_DIR / "data" / default_name)))
+
+
+def _pg_dsn() -> str:
+    url = os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
+    if url:
+        return url
+    host = os.getenv("PGHOST") or os.getenv("POSTGRES_HOST")
+    dbname = os.getenv("PGDATABASE") or os.getenv("POSTGRES_DB")
+    user = os.getenv("PGUSER") or os.getenv("POSTGRES_USER")
+    password = os.getenv("PGPASSWORD") or os.getenv("POSTGRES_PASSWORD")
+    port = os.getenv("PGPORT") or os.getenv("POSTGRES_PORT") or "5432"
+    if host and dbname and user:
+        pwd = f":{password}" if password else ""
+        return f"postgresql://{user}{pwd}@{host}:{port}/{dbname}"
+    raise RuntimeError("DATABASE_URL غير مضبوط للـ PostgreSQL")
+
+
+DB_PATH = _sqlite_path()
+
+
+def _sql(query: str) -> str:
+    if DB_BACKEND == "sqlite":
+        return query.replace("%s", "?")
+    return query
+
+
+def get_connection():
+    if DB_BACKEND == "postgres":
+        if psycopg2 is None:
+            raise RuntimeError("psycopg2 غير مثبت")
+        conn = psycopg2.connect(_pg_dsn(), cursor_factory=psycopg2.extras.RealDictCursor)
+        return conn
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
+def _execute(query: str, params: Sequence[Any] = ()) -> int:
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(_sql(query), params)
+        return getattr(cur, "rowcount", 0) or 0
+
+
+def _fetchone(query: str, params: Sequence[Any] = ()) -> Optional[Any]:
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(_sql(query), params)
+        return cur.fetchone()
+
+
+def _fetchall(query: str, params: Sequence[Any] = ()) -> List[Any]:
+    with get_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(_sql(query), params)
+        return list(cur.fetchall())
+
+
+def _row_value(row: Any, key: str, default: Any = None) -> Any:
+    if row is None:
+        return default
+    if isinstance(row, sqlite3.Row):
+        keys = row.keys()
+        return row[key] if key in keys else default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    return default
+
+
+def _row_to_dict(row: Any) -> Dict[str, Any]:
+    return {
+        "id": _row_value(row, "id"),
+        "national_id": _row_value(row, "national_id"),
+        "full_name": _row_value(row, "full_name"),
+        "blocked": bool(_row_value(row, "blocked", 0)),
+        "block_reason": _row_value(row, "block_reason"),
+        "visits": _row_value(row, "visits", 0),
+        "created_at": _row_value(row, "created_at"),
+        "last_seen_at": _row_value(row, "last_seen_at"),
+        "photo_path": _row_value(row, "photo_path"),
+        "card_path": _row_value(row, "card_path"),
+    }
+
+
 def init_db() -> None:
+    if DB_BACKEND == "postgres":
+        _init_db_postgres()
+    else:
+        _init_db_sqlite()
+
+
+def _init_db_sqlite() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with get_connection() as conn:
         conn.execute(
@@ -85,12 +177,58 @@ def init_db() -> None:
         )
 
 
+def _init_db_postgres() -> None:
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS people (
+            id SERIAL PRIMARY KEY,
+            national_id TEXT UNIQUE NOT NULL,
+            full_name TEXT,
+            blocked BOOLEAN NOT NULL DEFAULT FALSE,
+            block_reason TEXT,
+            visits INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP NOT NULL,
+            last_seen_at TIMESTAMP,
+            photo_path TEXT,
+            card_path TEXT,
+            face_embedding BYTEA
+        );
+        """
+    )
+    _execute("CREATE INDEX IF NOT EXISTS idx_people_name ON people(full_name);")
+    _execute("CREATE INDEX IF NOT EXISTS idx_people_nid ON people(national_id);")
+    _execute(
+        """
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """
+    )
+    _execute(
+        "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+        ("docai_grayscale", "0"),
+    )
+    _execute(
+        "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+        ("face_match_enabled", "1"),
+    )
+    _execute(
+        "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+        ("face_match_threshold", "0.35"),
+    )
+    _execute(
+        "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+        ("docai_max_dim", "1600"),
+    )
+    _execute(
+        "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
+        ("docai_jpeg_quality", "85"),
+    )
+
+
 def get_person_by_nid(national_id: str) -> Optional[Dict[str, Any]]:
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT * FROM people WHERE national_id = ?",
-            (national_id,),
-        ).fetchone()
+    row = _fetchone("SELECT * FROM people WHERE national_id = %s", (national_id,))
     return _row_to_dict(row) if row else None
 
 
@@ -102,68 +240,63 @@ def add_person(
     face_embedding: Optional[bytes] = None,
 ) -> Dict[str, Any]:
     now = datetime.datetime.utcnow().isoformat()
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO people (
-                national_id,
-                full_name,
-                blocked,
-                block_reason,
-                visits,
-                created_at,
-                last_seen_at,
-                photo_path,
-                card_path,
-                face_embedding
-            )
-            VALUES (?, ?, 0, NULL, 1, ?, ?, ?, ?, ?)
-            """,
-            (national_id, full_name, now, now, photo_path, card_path, face_embedding),
+    _execute(
+        """
+        INSERT INTO people (
+            national_id,
+            full_name,
+            blocked,
+            block_reason,
+            visits,
+            created_at,
+            last_seen_at,
+            photo_path,
+            card_path,
+            face_embedding
         )
+        VALUES (%s, %s, %s, NULL, 1, %s, %s, %s, %s, %s)
+        """,
+        (national_id, full_name, False, now, now, photo_path, card_path, face_embedding),
+    )
     return get_person_by_nid(national_id)  # type: ignore[return-value]
 
 
 def increment_visit(national_id: str) -> Optional[Dict[str, Any]]:
     now = datetime.datetime.utcnow().isoformat()
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE people SET visits = visits + 1, last_seen_at = ? WHERE national_id = ?",
-            (now, national_id),
-        )
+    _execute(
+        "UPDATE people SET visits = visits + 1, last_seen_at = %s WHERE national_id = %s",
+        (now, national_id),
+    )
     return get_person_by_nid(national_id)
 
 
 def update_name_if_missing(national_id: str, full_name: str) -> Optional[Dict[str, Any]]:
     if not full_name:
         return get_person_by_nid(national_id)
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE people SET full_name = COALESCE(NULLIF(full_name, ''), ?) WHERE national_id = ?",
-            (full_name, national_id),
-        )
+    _execute(
+        "UPDATE people SET full_name = COALESCE(NULLIF(full_name, ''), %s) WHERE national_id = %s",
+        (full_name, national_id),
+    )
     return get_person_by_nid(national_id)
 
 
 def update_photo_if_missing(national_id: str, photo_path: Optional[str]) -> Optional[Dict[str, Any]]:
     if not photo_path:
         return get_person_by_nid(national_id)
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE people SET photo_path = COALESCE(NULLIF(photo_path, ''), ?) WHERE national_id = ?",
-            (photo_path, national_id),
-        )
+    _execute(
+        "UPDATE people SET photo_path = COALESCE(NULLIF(photo_path, ''), %s) WHERE national_id = %s",
+        (photo_path, national_id),
+    )
     return get_person_by_nid(national_id)
 
 
 def update_card_if_missing(national_id: str, card_path: Optional[str]) -> Optional[Dict[str, Any]]:
     if not card_path:
         return get_person_by_nid(national_id)
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE people SET card_path = COALESCE(NULLIF(card_path, ''), ?) WHERE national_id = ?",
-            (card_path, national_id),
-        )
+    _execute(
+        "UPDATE people SET card_path = COALESCE(NULLIF(card_path, ''), %s) WHERE national_id = %s",
+        (card_path, national_id),
+    )
     return get_person_by_nid(national_id)
 
 
@@ -176,62 +309,57 @@ def update_media(
     updates = []
     params: List[Any] = []
     if photo_path:
-        updates.append("photo_path = ?")
+        updates.append("photo_path = %s")
         params.append(photo_path)
     if card_path:
-        updates.append("card_path = ?")
+        updates.append("card_path = %s")
         params.append(card_path)
     if face_embedding is not None:
-        updates.append("face_embedding = ?")
+        updates.append("face_embedding = %s")
         params.append(face_embedding)
     if not updates:
         return get_person_by_nid(national_id)
     params.append(national_id)
-    with get_connection() as conn:
-        conn.execute(
-            f"UPDATE people SET {', '.join(updates)} WHERE national_id = ?",
-            params,
-        )
+    _execute(
+        f"UPDATE people SET {', '.join(updates)} WHERE national_id = %s",
+        params,
+    )
     return get_person_by_nid(national_id)
 
 
 def set_block_status(national_id: str, blocked: bool, reason: Optional[str]) -> Optional[Dict[str, Any]]:
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE people SET blocked = ?, block_reason = ? WHERE national_id = ?",
-            (1 if blocked else 0, reason, national_id),
-        )
+    _execute(
+        "UPDATE people SET blocked = %s, block_reason = %s WHERE national_id = %s",
+        (bool(blocked), reason, national_id),
+    )
     return get_person_by_nid(national_id)
 
 
 def delete_person(national_id: str) -> bool:
-    with get_connection() as conn:
-        cur = conn.execute("DELETE FROM people WHERE national_id = ?", (national_id,))
-        return cur.rowcount > 0
+    return _execute("DELETE FROM people WHERE national_id = %s", (national_id,)) > 0
 
 
 def search_people(query: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
-    with get_connection() as conn:
-        if query:
-            q = f"%{query.strip()}%"
-            rows = conn.execute(
-                """
-                SELECT * FROM people
-                WHERE national_id LIKE ? OR full_name LIKE ?
-                ORDER BY last_seen_at DESC, created_at DESC
-                LIMIT ?
-                """,
-                (q, q, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT * FROM people
-                ORDER BY last_seen_at DESC, created_at DESC
-                LIMIT ?
-                """,
-                (limit,),
-            ).fetchall()
+    if query:
+        q = f"%{query.strip()}%"
+        rows = _fetchall(
+            """
+            SELECT * FROM people
+            WHERE national_id LIKE %s OR full_name LIKE %s
+            ORDER BY last_seen_at DESC, created_at DESC
+            LIMIT %s
+            """,
+            (q, q, limit),
+        )
+    else:
+        rows = _fetchall(
+            """
+            SELECT * FROM people
+            ORDER BY last_seen_at DESC, created_at DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
     return [_row_to_dict(row) for row in rows]
 
 
@@ -243,59 +371,58 @@ def update_person(
     updates = []
     params: List[Any] = []
     if full_name is not None:
-        updates.append("full_name = ?")
+        updates.append("full_name = %s")
         params.append(full_name)
     if new_national_id is not None and new_national_id.strip():
-        updates.append("national_id = ?")
+        updates.append("national_id = %s")
         params.append(new_national_id.strip())
     if not updates:
         return get_person_by_nid(national_id)
     params.append(national_id)
-    with get_connection() as conn:
-        conn.execute(
-            f"UPDATE people SET {', '.join(updates)} WHERE national_id = ?",
+    try:
+        _execute(
+            f"UPDATE people SET {', '.join(updates)} WHERE national_id = %s",
             params,
         )
+    except Exception as exc:
+        if DB_BACKEND == "postgres" and getattr(exc, "pgcode", "") == "23505":
+            raise ValueError("duplicate_nid") from exc
+        if isinstance(exc, sqlite3.IntegrityError):
+            raise ValueError("duplicate_nid") from exc
+        raise
     return get_person_by_nid(new_national_id or national_id)
 
 
 def get_people_with_embeddings(limit: int = 10000) -> List[Dict[str, Any]]:
-    with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM people
-            WHERE face_embedding IS NOT NULL
-            ORDER BY last_seen_at DESC, created_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
+    rows = _fetchall(
+        """
+        SELECT *
+        FROM people
+        WHERE face_embedding IS NOT NULL
+        ORDER BY last_seen_at DESC, created_at DESC
+        LIMIT %s
+        """,
+        (limit,),
+    )
     results = []
     for row in rows:
-        results.append({
-            **_row_to_dict(row),
-            "face_embedding": row["face_embedding"],
-        })
+        item = _row_to_dict(row)
+        item["face_embedding"] = _row_value(row, "face_embedding")
+        results.append(item)
     return results
 
 
 def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT value FROM settings WHERE key = ?",
-            (key,),
-        ).fetchone()
-    return row["value"] if row else default
+    row = _fetchone("SELECT value FROM settings WHERE key = %s", (key,))
+    return _row_value(row, "value", default)
 
 
 def set_setting(key: str, value: str) -> None:
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO settings (key, value)
-            VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value
-            """,
-            (key, value),
-        )
+    _execute(
+        """
+        INSERT INTO settings (key, value)
+        VALUES (%s, %s)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )

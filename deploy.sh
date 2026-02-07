@@ -27,6 +27,11 @@ python -m pip install -r "$ROOT/requirements.txt"
 
 mkdir -p "$ROOT/data" "$ROOT/data/debug" "$ROOT/data/photos" "$ROOT/data/cards" "$ROOT/data/logs"
 
+if [ ! -f "$ROOT/.env" ] && [ -f "$ROOT/.env.example" ]; then
+  echo "[ENV] إنشاء .env من .env.example"
+  cp "$ROOT/.env.example" "$ROOT/.env"
+fi
+
 if [ -f "$ROOT/.env" ]; then
   set -a
   # shellcheck disable=SC1091
@@ -36,6 +41,7 @@ fi
 
 MODE_ARG="${1:-}"
 MODE="${MODE_ARG:-${APP_ENV:-development}}"
+START_POSTGRES="${START_POSTGRES:-0}"
 
 if [[ "$MODE" == "prod" || "$MODE" == "production" ]]; then
   export APP_ENV="production"
@@ -43,6 +49,19 @@ if [[ "$MODE" == "prod" || "$MODE" == "production" ]]; then
 else
   export APP_ENV="development"
   export PRODUCTION=0
+fi
+
+if [ "$PRODUCTION" = "1" ]; then
+  if [ -z "${DATABASE_URL:-}" ] && [ -z "${POSTGRES_URL:-}" ]; then
+    if [ "$START_POSTGRES" = "1" ] && command -v docker >/dev/null 2>&1; then
+      echo "[DB] تشغيل PostgreSQL عبر Docker..."
+      docker compose -f "$ROOT/docker-compose.yml" up -d
+      export DATABASE_URL="postgresql://gates:gatespass@localhost:5432/gates_db"
+    else
+      echo "[DB] DATABASE_URL غير مضبوط. اضبطه أو فعّل START_POSTGRES=1."
+      exit 1
+    fi
+  fi
 fi
 
 echo "[4/4] تشغيل السيرفر على بورت 5000..."

@@ -23,15 +23,36 @@ bash deploy.sh dev
 bash deploy.sh production
 ```
 سيتم تشغيل Gunicorn مع Uvicorn workers وتسجيل اللوجات داخل `data/logs/`.
+راجع `PRODUCTION.md` لتجهيز الإنتاج بالكامل.
 
 ## قاعدة البيانات
-- Development: `data/gate_dev.db`
-- Production: `data/gate_prod.db`
+### PostgreSQL (Production)
+حدد متغير:
+```
+export DATABASE_URL=postgresql://user:pass@host:5432/gates_db
+```
+وعند التشغيل بـ:
+```
+bash deploy.sh production
+```
+سيتم استخدام PostgreSQL مباشرة.
 
-يمكنك تحديد المسار يدويًا عبر:
+أو يمكن تشغيل PostgreSQL عبر Docker:
 ```
-export DB_PATH=/custom/path/to/db.sqlite
+export START_POSTGRES=1
+export POSTGRES_DB=gates_db
+export POSTGRES_USER=gates
+export POSTGRES_PASSWORD=gatespass
+bash deploy.sh production
 ```
+سيتم تشغيل حاوية `gates-postgres` وربطها تلقائيًا.
+
+### SQLite (Development فقط)
+```
+export APP_ENV=development
+bash deploy.sh dev
+```
+يتم استخدام `data/gate_dev.db` تلقائيًا.
 
 ## إعداد Google Document AI (اختياري)
 لتفعيل Document AI بدل الـ OCR المحلي:

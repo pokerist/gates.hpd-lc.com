@@ -7,6 +7,9 @@ import os
 import datetime
 import base64
 import binascii
+import time
+from collections import deque
+from threading import Lock
 
 import cv2
 import numpy as np
@@ -22,6 +25,13 @@ from core import db
 from core import settings as app_settings
 from core.ocr_pipeline import prepare_debug_artifacts, run_security_scan
 from core import face_match
+
+RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "1") == "1"
+RATE_LIMIT_WINDOW_SEC = int(os.getenv("RATE_LIMIT_WINDOW_SEC", "60"))
+RATE_LIMIT_MAX = int(os.getenv("RATE_LIMIT_MAX", "20"))
+TRUST_PROXY = os.getenv("TRUST_PROXY", "1") == "1"
+_rate_lock = Lock()
+_rate_buckets: dict[str, deque[float]] = {}
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -139,6 +149,29 @@ def _decode_base64_image(value: str) -> bytes:
         return base64.b64decode(payload, validate=True)
     except (binascii.Error, ValueError):
         raise HTTPException(status_code=400, detail="Base64 غير صالح")
+
+
+def _client_ip(request: Request) -> str:
+    if TRUST_PROXY:
+        forwarded = request.headers.get("X-Forwarded-For") or request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _enforce_rate_limit(request: Request) -> None:
+    if not RATE_LIMIT_ENABLED:
+        return
+    ip = _client_ip(request)
+    now = time.time()
+    with _rate_lock:
+        bucket = _rate_buckets.setdefault(ip, deque())
+        cutoff = now - RATE_LIMIT_WINDOW_SEC
+        while bucket and bucket[0] < cutoff:
+            bucket.popleft()
+        if len(bucket) >= RATE_LIMIT_MAX:
+            raise HTTPException(status_code=429, detail="معدل الطلبات عالي، حاول لاحقاً")
+        bucket.append(now)
 
 
 def _process_scan(image_bytes: bytes) -> dict:
@@ -334,6 +367,7 @@ async def scan_card(image: UploadFile = File(...)):
 @app.post("/api/v1/security/scan")
 async def security_scan_api(request: Request, image: UploadFile = File(...)):
     _require_api_key(request)
+    _enforce_rate_limit(request)
     if image.content_type and not image.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="الملف لازم يكون صورة")
     image_bytes = await image.read()
@@ -346,6 +380,7 @@ async def security_scan_api(request: Request, image: UploadFile = File(...)):
 @app.post("/api/v1/security/scan-base64")
 def security_scan_base64(request: Request, payload: Base64ScanRequest):
     _require_api_key(request)
+    _enforce_rate_limit(request)
     image_bytes = _decode_base64_image(payload.image_base64)
     result = _process_scan(image_bytes)
     if result["status"] == "error":
@@ -443,7 +478,7 @@ def update_person(payload: UpdatePersonRequest):
             full_name=payload.full_name,
             new_national_id=payload.new_national_id,
         )
-    except sqlite3.IntegrityError:
+    except ValueError:
         raise HTTPException(status_code=400, detail="الرقم القومي الجديد مستخدم بالفعل")
     if not person:
         raise HTTPException(status_code=404, detail="الشخص غير موجود")

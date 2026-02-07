@@ -67,7 +67,7 @@ function renderTable(items) {
       ? `
         <div style="display:flex;align-items:center;gap:10px;">
           <img src="/card-images/${person.card_path}" alt="card" style="width:80px;height:52px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,0.2);" />
-          <button class="icon-btn" data-action="view-card" data-card="/card-images/${person.card_path}" title="عرض البطاقة">
+          <button class="icon-btn" data-action="view-card" data-card="/card-images/${person.card_path}" data-face="${person.photo_path ? `/person-photos/${person.photo_path}` : ""}" title="عرض البطاقة">
             ${icons.eye}
           </button>
         </div>
@@ -84,7 +84,7 @@ function renderTable(items) {
       <td>${statusBadge}</td>
       <td>${person.block_reason || "—"}</td>
       <td>${person.visits ?? 0}</td>
-      <td>${person.last_seen_at || "—"}</td>
+      <td>${formatDate(person.last_seen_at)}</td>
       <td>
         <div class="action-group">
           <button class="icon-btn" data-action="edit" data-nid="${person.national_id}" data-name="${safeName}" title="تعديل">
@@ -159,8 +159,9 @@ tableBody.addEventListener("click", async (event) => {
 
   if (action === "view-card") {
     const url = button.getAttribute("data-card");
+    const faceUrl = button.getAttribute("data-face") || "";
     if (url) {
-      openCardPreview(url);
+      openCardPreview(url, faceUrl);
     }
   }
 
@@ -181,10 +182,18 @@ refreshBtn.addEventListener("click", fetchPeople);
 const previewPanel = document.getElementById("cardPreviewPanel");
 const previewBackdrop = document.getElementById("cardPreviewBackdrop");
 const previewImage = document.getElementById("cardPreviewImage");
+const facePreviewImage = document.getElementById("facePreviewImage");
 const previewClose = document.getElementById("cardPreviewClose");
 
-function openCardPreview(url) {
+function openCardPreview(url, faceUrl) {
   previewImage.src = `${url}?t=${Date.now()}`;
+  if (faceUrl) {
+    facePreviewImage.src = `${faceUrl}?t=${Date.now()}`;
+    facePreviewImage.style.display = "block";
+  } else {
+    facePreviewImage.src = "";
+    facePreviewImage.style.display = "none";
+  }
   previewPanel.classList.remove("hidden");
   previewBackdrop.classList.remove("hidden");
   previewPanel.setAttribute("aria-hidden", "false");
@@ -195,9 +204,21 @@ function closeCardPreview() {
   previewBackdrop.classList.add("hidden");
   previewPanel.setAttribute("aria-hidden", "true");
   previewImage.src = "";
+  facePreviewImage.src = "";
 }
 
 previewClose?.addEventListener("click", closeCardPreview);
 previewBackdrop?.addEventListener("click", closeCardPreview);
 
 fetchPeople();
+
+function formatDate(value) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  try {
+    return new Intl.DateTimeFormat("ar-EG", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+  } catch (err) {
+    return parsed.toLocaleString();
+  }
+}
