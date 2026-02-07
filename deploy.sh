@@ -60,9 +60,25 @@ START_REDIS="${START_REDIS:-0}"
 if [ "$PRODUCTION" = "1" ]; then
   if [ -z "${DATABASE_URL:-}" ] && [ -z "${POSTGRES_URL:-}" ]; then
     if [ "$START_POSTGRES" = "1" ] && command -v docker >/dev/null 2>&1; then
+      POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+      if command -v ss >/dev/null 2>&1; then
+        if ss -lnt | awk '{print $4}' | grep -q ":${POSTGRES_PORT}$"; then
+          if [ "${POSTGRES_PORT}" = "5432" ]; then
+            POSTGRES_PORT="5433"
+            export POSTGRES_PORT
+            echo "[DB] المنفذ 5432 مستخدم، التحويل إلى 5433..."
+          else
+            echo "[DB] المنفذ ${POSTGRES_PORT} مستخدم. غيّر POSTGRES_PORT أو عطّل START_POSTGRES."
+            exit 1
+          fi
+        fi
+      fi
       echo "[DB] تشغيل PostgreSQL عبر Docker..."
       docker compose -f "$ROOT/docker-compose.yml" up -d
-      export DATABASE_URL="postgresql://gates:gatespass@localhost:5432/gates_db"
+      POSTGRES_DB="${POSTGRES_DB:-gates_db}"
+      POSTGRES_USER="${POSTGRES_USER:-gates}"
+      POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-gatespass}"
+      export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/${POSTGRES_DB}"
     else
       echo "[DB] DATABASE_URL غير مضبوط. اضبطه أو فعّل START_POSTGRES=1."
       exit 1
