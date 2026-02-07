@@ -232,6 +232,13 @@ def _resize_for_docai(image: np.ndarray) -> np.ndarray:
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
+def _prepare_docai_image(card_image: np.ndarray) -> np.ndarray:
+    docai_image = _resize_for_docai(card_image)
+    if app_settings.get_docai_grayscale():
+        docai_image = cv2.cvtColor(docai_image, cv2.COLOR_BGR2GRAY)
+    return docai_image
+
+
 def _serialize_docai_entity(entity: Any, doc_text: str) -> Dict[str, Any]:
     item = {
         "type": getattr(entity, "type_", "") or "",
@@ -266,9 +273,7 @@ def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, Any]]:
         client = documentai.DocumentProcessorServiceClient(client_options=client_options)
         name = client.processor_path(project_id, location, processor_id)
 
-        docai_image = _resize_for_docai(card_image)
-        if app_settings.get_docai_grayscale():
-            docai_image = cv2.cvtColor(docai_image, cv2.COLOR_BGR2GRAY)
+        docai_image = _prepare_docai_image(card_image)
         raw_doc = documentai.RawDocument(
             content=_encode_jpeg(docai_image, quality=_docai_jpeg_quality()),
             mime_type="image/jpeg",
@@ -774,10 +779,9 @@ def run_ocr_with_photo(image_bytes: bytes) -> Tuple[OcrResult, Optional[np.ndarr
 
 def save_debug_image(card_image: np.ndarray, fields: List[Dict[str, Any]]) -> str:
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-    annotated = annotate_image(card_image, fields)
     file_id = uuid.uuid4().hex
     output_path = DEBUG_DIR / f"debug_{file_id}.jpg"
-    cv2.imwrite(str(output_path), annotated)
+    cv2.imwrite(str(output_path), card_image)
     return file_id
 
 
@@ -795,12 +799,17 @@ def prepare_debug_artifacts(image_bytes: bytes) -> Dict[str, Any]:
     card_bbox = scan.card_bbox
     file_id = save_debug_image(card_image, fields)
 
+    docai_url = ""
     try:
-        raw_image = _decode_image(image_bytes)
-        _save_debug_variant(raw_image, "raw", file_id)
-        raw_url = f"/debug-images/raw_{file_id}.jpg"
+        docai_image = _prepare_docai_image(card_image)
+        encoded = _encode_jpeg(docai_image, quality=_docai_jpeg_quality())
+        decoded = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_UNCHANGED)
+        if decoded is None:
+            decoded = docai_image
+        _save_debug_variant(decoded, "docai", file_id)
+        docai_url = f"/debug-images/docai_{file_id}.jpg"
     except Exception:
-        raw_url = ""
+        docai_url = ""
 
     face_url = ""
     if scan.photo_image is not None:
@@ -820,7 +829,7 @@ def prepare_debug_artifacts(image_bytes: bytes) -> Dict[str, Any]:
         "tesseract": tesseract_payload,
         "docai": docai_payload or {},
         "docai_entities": (docai_payload or {}).get("entities", []),
-        "raw_image_url": raw_url,
+        "docai_image_url": docai_url,
         "face_image_url": face_url,
         "timings": scan.timings,
         "final": {

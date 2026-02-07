@@ -4,7 +4,7 @@ const captureBtn = document.getElementById("debugCaptureBtn");
 const switchBtn = document.getElementById("debugSwitchBtn");
 const fileInput = document.getElementById("debugFileInput");
 const debugImage = document.getElementById("debugImage");
-const debugRawImage = document.getElementById("debugRawImage");
+const debugDocaiImage = document.getElementById("debugDocaiImage");
 const debugFaceImage = document.getElementById("debugFaceImage");
 const debugFinal = document.getElementById("debugFinal");
 const debugTess = document.getElementById("debugTess");
@@ -222,7 +222,7 @@ async function sendImage(blob) {
   debugDocai.innerHTML = "";
   debugTimings.innerHTML = "";
   debugImage.style.display = "none";
-  debugRawImage.style.display = "none";
+  debugDocaiImage.style.display = "none";
   debugFaceImage.style.display = "none";
   const form = new FormData();
   form.append("image", blob, "debug.jpg");
@@ -242,9 +242,9 @@ function renderDebug(data) {
     debugImage.src = `${data.debug_image_url}?t=${Date.now()}`;
     debugImage.style.display = "block";
   }
-  if (data.raw_image_url) {
-    debugRawImage.src = `${data.raw_image_url}?t=${Date.now()}`;
-    debugRawImage.style.display = "block";
+  if (data.docai_image_url) {
+    debugDocaiImage.src = `${data.docai_image_url}?t=${Date.now()}`;
+    debugDocaiImage.style.display = "block";
   }
   if (data.face_image_url) {
     debugFaceImage.src = `${data.face_image_url}?t=${Date.now()}`;

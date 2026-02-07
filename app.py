@@ -320,7 +320,7 @@ async def debug_scan(image: UploadFile = File(...)):
     return {
         "status": "ok",
         "debug_image_url": debug_image_url,
-        "raw_image_url": artifacts.get("raw_image_url"),
+        "docai_image_url": artifacts.get("docai_image_url"),
         "face_image_url": artifacts.get("face_image_url"),
         "fields": artifacts["fields"],
         "tesseract": artifacts["tesseract"],
