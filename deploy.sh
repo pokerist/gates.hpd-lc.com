@@ -139,7 +139,11 @@ ensure_docker() {
     return 1
   fi
   echo "[DB] تثبيت Docker..."
-  $SUDO apt-get install -y docker.io docker-compose-plugin
+  $SUDO apt-get install -y docker.io || true
+  if ! command -v docker >/dev/null 2>&1; then
+    $SUDO apt-get install -y docker.io
+  fi
+  $SUDO apt-get install -y docker-compose-plugin || $SUDO apt-get install -y docker-compose || true
   if command -v systemctl >/dev/null 2>&1; then
     $SUDO systemctl enable --now docker || true
   else
@@ -177,7 +181,10 @@ if [ "$PRODUCTION" = "1" ]; then
           DOCKER_COMPOSE="docker-compose"
         else
           if [ "$AUTO_INSTALL_DOCKER" = "1" ]; then
-            $SUDO apt-get install -y docker-compose-plugin
+            $SUDO apt-get install -y docker-compose-plugin || $SUDO apt-get install -y docker-compose || true
+          fi
+          if command -v docker-compose >/dev/null 2>&1; then
+            DOCKER_COMPOSE="docker-compose"
           fi
         fi
       fi
