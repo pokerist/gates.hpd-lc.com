@@ -8,6 +8,10 @@ if command -v sudo >/dev/null 2>&1; then
 else
   SUDO=""
 fi
+SUDO_PREFIX=""
+if [ -n "$SUDO" ]; then
+  SUDO_PREFIX="$SUDO "
+fi
 
 echo "[1/4] تثبيت المتطلبات على Ubuntu..."
 $SUDO apt-get update -y
@@ -149,6 +153,12 @@ ensure_docker() {
   else
     $SUDO service docker start || true
   fi
+  if getent group docker >/dev/null 2>&1; then
+    if ! id -nG "$(id -un)" | grep -qw docker; then
+      $SUDO usermod -aG docker "$(id -un)" || true
+      echo "[DB] تمت إضافة المستخدم لمجموعة docker. يلزم تسجيل خروج/دخول لتفعيلها."
+    fi
+  fi
   return 0
 }
 
@@ -175,20 +185,28 @@ if [ "$PRODUCTION" = "1" ]; then
         fi
       fi
       echo "[DB] تشغيل PostgreSQL عبر Docker..."
-      DOCKER_COMPOSE="docker compose"
-      if ! docker compose version >/dev/null 2>&1; then
+      DOCKER_BIN="docker"
+      if ! docker info >/dev/null 2>&1; then
+        if [ -n "$SUDO" ]; then
+          DOCKER_BIN="$SUDO docker"
+        fi
+      fi
+      DOCKER_COMPOSE_CMD="$DOCKER_BIN compose"
+      if ! $DOCKER_BIN compose version >/dev/null 2>&1; then
         if command -v docker-compose >/dev/null 2>&1; then
-          DOCKER_COMPOSE="docker-compose"
+          DOCKER_COMPOSE_CMD="${SUDO_PREFIX}docker-compose"
         else
           if [ "$AUTO_INSTALL_DOCKER" = "1" ]; then
             $SUDO apt-get install -y docker-compose-plugin || $SUDO apt-get install -y docker-compose || true
           fi
           if command -v docker-compose >/dev/null 2>&1; then
-            DOCKER_COMPOSE="docker-compose"
+            DOCKER_COMPOSE_CMD="${SUDO_PREFIX}docker-compose"
+          else
+            DOCKER_COMPOSE_CMD="$DOCKER_BIN compose"
           fi
         fi
       fi
-      $DOCKER_COMPOSE -f "$ROOT/docker-compose.yml" up -d
+      $DOCKER_COMPOSE_CMD -f "$ROOT/docker-compose.yml" up -d
       POSTGRES_DB="${POSTGRES_DB:-gates_db}"
       POSTGRES_USER="${POSTGRES_USER:-gates}"
       POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-gatespass}"
