@@ -122,6 +122,10 @@ def _save_original_card_image(image_bytes: bytes) -> Optional[str]:
     return filename
 
 
+def _generate_temp_nid() -> str:
+    return f"TEMP-{uuid.uuid4().hex[:12]}"
+
+
 def _require_api_key(request: Request) -> None:
     expected = os.getenv("SECURITY_API_KEY")
     if not expected:
@@ -189,6 +193,15 @@ def _process_scan(image_bytes: bytes) -> dict:
     full_name = (ocr.full_name or "").strip()
     face_match_info = scan.face_match
     ocr_source = "docai" if scan.docai else "tesseract"
+    photo_available = scan.photo_image is not None
+
+    if not photo_available:
+        return {
+            "status": "error",
+            "message": "لم يتم استخراج صورة واضحة من البطاقة",
+            "ocr": {"full_name": full_name, "national_id": national_id},
+            "timings": scan.timings,
+        }
 
     if face_match_info and face_match_info.get("matched"):
         matched_person = face_match_info.get("person") or {}
@@ -240,12 +253,14 @@ def _process_scan(image_bytes: bytes) -> dict:
         }
 
     if not national_id:
-        return {
-            "status": "error",
-            "message": "لم يتم استخراج رقم قومي",
-            "ocr": {"full_name": full_name, "national_id": national_id},
-            "source": "ocr",
-        }
+        if not full_name:
+            return {
+                "status": "error",
+                "message": "لم يتم استخراج اسم أو رقم قومي",
+                "ocr": {"full_name": full_name, "national_id": national_id},
+                "source": "ocr",
+            }
+        national_id = _generate_temp_nid()
 
     person = db.get_person_by_nid(national_id)
     photo_filename = None

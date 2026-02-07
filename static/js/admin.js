@@ -132,8 +132,19 @@ tableBody.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
   const action = button.getAttribute("data-action");
+  if (!action) return;
+
+  if (action === "view-card") {
+    const url = button.getAttribute("data-card");
+    const faceUrl = button.getAttribute("data-face") || "";
+    if (url) {
+      openCardPreview(url, faceUrl);
+    }
+    return;
+  }
+
   const nid = button.getAttribute("data-nid");
-  if (!action || !nid) return;
+  if (!nid) return;
 
   if (action === "toggle") {
     const isBlocked = button.textContent.includes("إلغاء");
@@ -155,14 +166,6 @@ tableBody.addEventListener("click", async (event) => {
         new_national_id: newNid && newNid.trim() ? newNid.trim() : undefined
       })
     });
-  }
-
-  if (action === "view-card") {
-    const url = button.getAttribute("data-card");
-    const faceUrl = button.getAttribute("data-face") || "";
-    if (url) {
-      openCardPreview(url, faceUrl);
-    }
   }
 
   if (action === "delete") {

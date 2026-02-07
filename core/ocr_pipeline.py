@@ -587,9 +587,36 @@ def _prepare_assets_timed(
         card_image = image
         card_bbox = (0, 0, image.shape[1], image.shape[0])
 
+    card_rotation = 0
+    if card_image.shape[0] > card_image.shape[1]:
+        card_image = _rotate_image(card_image, 90)
+        card_rotation = 90
+    try:
+        print(
+            "[PIPELINE] Card crop size="
+            f"{card_image.shape[1]}x{card_image.shape[0]} rotate={card_rotation}"
+        )
+    except Exception:
+        pass
+
     t0 = perf_counter()
     fields = _detect_fields(card_image)
     timings["detect_fields_ms"] = (perf_counter() - t0) * 1000
+    if not fields:
+        best_fields = fields
+        best_image = card_image
+        best_rotation = 0
+        for angle in (90, 180, 270):
+            rotated = _rotate_image(card_image, angle)
+            candidate = _detect_fields(rotated)
+            if candidate and len(candidate) > len(best_fields):
+                best_fields = candidate
+                best_image = rotated
+                best_rotation = angle
+        if best_rotation:
+            card_image = best_image
+            fields = best_fields
+            print(f"[PIPELINE] Fields improved after card rotation {best_rotation}°")
     if fields:
         preview = ", ".join(
             f"{field.get('label')}:{field.get('conf', 0.0):.2f}" for field in fields[:6]
@@ -851,8 +878,10 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
             t0 = perf_counter()
             tess_nid = _tesseract_nid_from_fields(card_image, fields)
             timings["tesseract_nid_ms"] = (perf_counter() - t0) * 1000
+            if len(tess_nid) > 14:
+                tess_nid = ""
             tesseract_payload["national_id_raw"] = tess_nid
-            if len(tess_nid) > len(docai_nid):
+            if tess_nid and len(tess_nid) > len(docai_nid):
                 docai_nid = tess_nid
         national_id = docai_nid
     else:
@@ -862,6 +891,8 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
         t0 = perf_counter()
         tesseract_nid_text = _tesseract_nid_from_fields(card_image, fields)
         timings["tesseract_nid_ms"] = (perf_counter() - t0) * 1000
+        if len(tesseract_nid_text) > 14:
+            tesseract_nid_text = ""
         tesseract_payload = {
             "full_name_raw": tesseract_full_name,
             "national_id_raw": tesseract_nid_text,
