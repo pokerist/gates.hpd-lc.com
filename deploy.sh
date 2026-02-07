@@ -21,11 +21,18 @@ fi
 # shellcheck disable=SC1091
 source "$ROOT/.venv/bin/activate"
 
- echo "[3/4] تثبيت الحزم..."
+echo "[3/4] تثبيت الحزم..."
 python -m pip install --upgrade pip
 python -m pip install -r "$ROOT/requirements.txt"
 
-mkdir -p "$ROOT/data" "$ROOT/data/debug"
+mkdir -p "$ROOT/data" "$ROOT/data/debug" "$ROOT/data/photos"
+
+if [ -f "$ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
 
 echo "[4/4] تشغيل السيرفر على بورت 5000..."
 export TESSDATA_PREFIX="$ROOT/tessdata"

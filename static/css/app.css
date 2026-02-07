@@ -66,10 +66,10 @@ header {
 }
 
 .brand-logo {
-  width: 184px;
-  height: 184px;
+  width: 200px;
+  height: auto;
   object-fit: contain;
-  filter: brightness(0) invert(1);
+  filter: brightness(0) invert(1) contrast(1.2);
 }
 
 .brand-text {

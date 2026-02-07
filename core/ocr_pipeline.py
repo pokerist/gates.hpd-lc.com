@@ -73,6 +73,123 @@ def _tess_config(base_config: str = "") -> str:
     return base_config
 
 
+def _docai_settings() -> Optional[Dict[str, str]]:
+    processor_id = os.getenv("DOC_AI_PROCESSOR_ID")
+    project_id = os.getenv("DOC_AI_PROJECT_NUMBER") or os.getenv("DOC_AI_PROJECT_ID")
+    location = os.getenv("DOC_AI_LOCATION", "us")
+    if not processor_id or not project_id:
+        return None
+    return {
+        "processor_id": processor_id,
+        "project_id": project_id,
+        "location": location,
+    }
+
+
+def _docai_candidates(env_name: str, defaults: List[str]) -> List[str]:
+    raw = os.getenv(env_name, "")
+    if raw.strip():
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return defaults
+
+
+def _match_entity_type(entity_type: str, candidates: List[str]) -> bool:
+    normalized = entity_type.lower()
+    for cand in candidates:
+        cand_norm = cand.lower()
+        if not cand_norm:
+            continue
+        if normalized == cand_norm or cand_norm in normalized:
+            return True
+    return False
+
+
+def _entity_text(entity: Any) -> str:
+    if hasattr(entity, "mention_text") and entity.mention_text:
+        return entity.mention_text
+    normalized_value = getattr(entity, "normalized_value", None)
+    if normalized_value is not None:
+        text = getattr(normalized_value, "text", "")
+        if text:
+            return text
+    return ""
+
+
+def _pick_best_entity(entities: List[Any], candidates: List[str]) -> str:
+    best_text = ""
+    best_conf = -1.0
+    for entity in entities:
+        entity_type = getattr(entity, "type_", "") or ""
+        if not _match_entity_type(entity_type, candidates):
+            continue
+        confidence = float(getattr(entity, "confidence", 0.0) or 0.0)
+        text = _entity_text(entity).strip()
+        if text and confidence >= best_conf:
+            best_conf = confidence
+            best_text = text
+    return best_text
+
+
+def _encode_jpeg(image: np.ndarray, quality: int = 95) -> bytes:
+    success, buffer = cv2.imencode(".jpg", image, [int(cv2.IMWRITE_JPEG_QUALITY), quality])
+    if not success:
+        raise ValueError("تعذر تحويل الصورة")
+    return buffer.tobytes()
+
+
+def _docai_extract_fields(card_image: np.ndarray) -> Optional[Dict[str, str]]:
+    settings = _docai_settings()
+    if settings is None:
+        return None
+
+    try:
+        from google.cloud import documentai
+    except Exception as exc:
+        print(f"[DOC-AI] Library not available: {exc}")
+        return None
+
+    project_id = settings["project_id"]
+    location = settings["location"]
+    processor_id = settings["processor_id"]
+
+    client_options = {"api_endpoint": f"{location}-documentai.googleapis.com"}
+    client = documentai.DocumentProcessorServiceClient(client_options=client_options)
+    name = client.processor_path(project_id, location, processor_id)
+
+    raw_doc = documentai.RawDocument(
+        content=_encode_jpeg(card_image, quality=95),
+        mime_type="image/jpeg",
+    )
+
+    request = documentai.ProcessRequest(
+        name=name,
+        raw_document=raw_doc,
+        skip_human_review=True,
+    )
+
+    result = client.process_document(request=request)
+    entities = list(getattr(result.document, "entities", []) or [])
+
+    name_candidates = _docai_candidates(
+        "DOC_AI_NAME_TYPES",
+        ["full_name", "fullname", "fullName", "name", "arabic_name", "person_name"],
+    )
+    nid_candidates = _docai_candidates(
+        "DOC_AI_NID_TYPES",
+        ["national_id", "nationalid", "nationalID", "nid", "id_number", "identity_number"],
+    )
+
+    full_name = _pick_best_entity(entities, name_candidates)
+    national_id = _normalize_digits(_pick_best_entity(entities, nid_candidates))
+
+    if not full_name and not national_id:
+        return None
+
+    payload = {"full_name": full_name, "national_id": national_id}
+    print("[OCR][docai]", payload)
+    return payload
+
+
 def _decode_image(image_bytes: bytes) -> np.ndarray:
     data = np.frombuffer(image_bytes, np.uint8)
     image = cv2.imdecode(data, cv2.IMREAD_COLOR)
@@ -168,6 +285,19 @@ def _detect_fields(card_image: np.ndarray) -> List[Dict[str, Any]]:
     return boxes
 
 
+def _prepare_card(image_bytes: bytes) -> Tuple[np.ndarray, List[Dict[str, Any]], Tuple[int, int, int, int]]:
+    _ensure_models()
+    image = _decode_image(image_bytes)
+    card_bbox = _detect_card_bbox(image)
+    if card_bbox:
+        card_image = _crop(image, card_bbox)
+    else:
+        card_image = image
+        card_bbox = (0, 0, image.shape[1], image.shape[0])
+    fields = _detect_fields(card_image)
+    return card_image, fields, card_bbox
+
+
 def _normalize_name_parts(parts: List[Dict[str, Any]]) -> str:
     if not parts:
         return ""
@@ -235,17 +365,7 @@ def _extract_photo_region(card_image: np.ndarray, fields: List[Dict[str, Any]]) 
 
 
 def _process(image_bytes: bytes, include_tess_name: bool = False) -> Tuple[OcrResult, np.ndarray, List[Dict[str, Any]]]:
-    _ensure_models()
-
-    image = _decode_image(image_bytes)
-    card_bbox = _detect_card_bbox(image)
-    if card_bbox:
-        card_image = _crop(image, card_bbox)
-    else:
-        card_image = image
-        card_bbox = (0, 0, image.shape[1], image.shape[0])
-
-    fields = _detect_fields(card_image)
+    card_image, fields, card_bbox = _prepare_card(image_bytes)
 
     name_labels = {
         "firstname",
@@ -362,8 +482,21 @@ def run_ocr(image_bytes: bytes) -> OcrResult:
 
 
 def run_ocr_with_photo(image_bytes: bytes) -> Tuple[OcrResult, Optional[np.ndarray]]:
-    result, card_image, fields = _process(image_bytes, include_tess_name=False)
+    card_image, fields, card_bbox = _prepare_card(image_bytes)
     photo = _extract_photo_region(card_image, fields)
+
+    docai_payload = _docai_extract_fields(card_image)
+    if docai_payload:
+        result = OcrResult(
+            full_name=docai_payload.get("full_name", ""),
+            national_id=docai_payload.get("national_id", ""),
+            easyocr_raw={},
+            tesseract_raw={},
+            debug={"card_bbox": card_bbox, "fields": fields},
+        )
+        return result, photo
+
+    result, _, _ = _process(image_bytes, include_tess_name=False)
     return result, photo
 
 
@@ -377,17 +510,20 @@ def save_debug_image(card_image: np.ndarray, fields: List[Dict[str, Any]]) -> st
 
 
 def prepare_debug_artifacts(image_bytes: bytes) -> Dict[str, Any]:
-    result, card_image, fields = _process(image_bytes, include_tess_name=True)
+    card_image, fields, card_bbox = _prepare_card(image_bytes)
+    result, _, _ = _process(image_bytes, include_tess_name=True)
+    docai_payload = _docai_extract_fields(card_image)
     file_id = save_debug_image(card_image, fields)
 
     return {
         "file_id": file_id,
-        "card_bbox": result.debug["card_bbox"],
+        "card_bbox": card_bbox,
         "fields": fields,
         "easyocr": result.easyocr_raw,
         "tesseract": result.tesseract_raw,
+        "docai": docai_payload or {},
         "final": {
-            "full_name": result.full_name,
-            "national_id": result.national_id,
+            "full_name": (docai_payload or {}).get("full_name", result.full_name),
+            "national_id": (docai_payload or {}).get("national_id", result.national_id),
         },
     }
