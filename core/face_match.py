@@ -1,52 +1,27 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Tuple, List
-import os
+from functools import lru_cache
 from threading import Lock
+from typing import Any, Dict, List, Optional, Tuple
+import os
 
-import numpy as np
 import cv2
+import numpy as np
 from insightface.app import FaceAnalysis
 
 from core import db
 
-_face_app: Optional[FaceAnalysis] = None
-_index_lock = Lock()
-_annoy_index = None
-_annoy_items: List[Tuple[Dict[str, Any], np.ndarray]] = []
-_index_dirty = True
-
-try:
-    from annoy import AnnoyIndex
-except Exception:  # pragma: no cover - optional
-    AnnoyIndex = None
-
 EMBEDDING_DIM = 512
+
 FACE_MAX_DIM = int(os.getenv("FACE_MAX_DIM", "640"))
-FACE_DET_SIZE_RAW = os.getenv("FACE_DET_SIZE", "320")
-ANNOY_TREES = int(os.getenv("ANNOY_TREES", "10"))
+FACE_DET_SIZE_RAW = os.getenv("FACE_DET_SIZE", "640")
+FACE_MIN_SCORE = float(os.getenv("FACE_MIN_SCORE", "0.5"))
+FACE_MAX_CANDIDATES = int(os.getenv("FACE_MAX_CANDIDATES", "50"))
 
-
-def _ensure_face_app() -> FaceAnalysis:
-    global _face_app
-    if _face_app is None:
-        det_size = _parse_det_size(FACE_DET_SIZE_RAW)
-        _face_app = FaceAnalysis(
-            name="buffalo_l",
-            providers=["CPUExecutionProvider"],
-        )
-        _face_app.prepare(ctx_id=-1, det_size=det_size)
-    return _face_app
-
-
-def _to_bgr(image: np.ndarray) -> np.ndarray:
-    if image is None:
-        return image
-    if len(image.shape) == 2:
-        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-    if image.shape[2] == 4:
-        return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
-    return image
+_cache_lock = Lock()
+_embedding_matrix: Optional[np.ndarray] = None
+_embedding_people: List[Dict[str, Any]] = []
+_index_dirty = True
 
 
 def _parse_det_size(value: str) -> Tuple[int, int]:
@@ -58,7 +33,28 @@ def _parse_det_size(value: str) -> Tuple[int, int]:
         size = int(value)
         return (size, size)
     except Exception:
-        return (320, 320)
+        return (640, 640)
+
+
+@lru_cache(maxsize=1)
+def _get_face_app() -> FaceAnalysis:
+    det_size = _parse_det_size(FACE_DET_SIZE_RAW)
+    app = FaceAnalysis(
+        name="buffalo_l",
+        providers=["CPUExecutionProvider"],
+    )
+    app.prepare(ctx_id=-1, det_size=det_size)
+    return app
+
+
+def _to_bgr(image: np.ndarray) -> np.ndarray:
+    if image is None:
+        return image
+    if len(image.shape) == 2:
+        return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    if image.shape[2] == 4:
+        return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+    return image
 
 
 def _resize_for_face(image: np.ndarray) -> np.ndarray:
@@ -74,7 +70,7 @@ def _resize_for_face(image: np.ndarray) -> np.ndarray:
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 
-def _normalize_embedding(emb: np.ndarray) -> Optional[np.ndarray]:
+def _normalize_embedding(emb: Optional[np.ndarray]) -> Optional[np.ndarray]:
     if emb is None:
         return None
     emb = np.asarray(emb, dtype=np.float32)
@@ -87,16 +83,20 @@ def _normalize_embedding(emb: np.ndarray) -> Optional[np.ndarray]:
 def extract_face_embedding(image: np.ndarray) -> Optional[np.ndarray]:
     if image is None:
         return None
-    app = _ensure_face_app()
-    bgr = _to_bgr(image)
-    bgr = _resize_for_face(bgr)
+    app = _get_face_app()
+    bgr = _resize_for_face(_to_bgr(image))
     faces = app.get(bgr)
     if not faces:
         return None
-    best = max(faces, key=lambda f: (f.bbox[2] - f.bbox[0]) * (f.bbox[3] - f.bbox[1]))
-    emb = getattr(best, "embedding", None)
-    if emb is None:
+    if len(faces) != 1:
         return None
+    face = faces[0]
+    det_score = getattr(face, "det_score", None)
+    if det_score is None:
+        det_score = getattr(face, "score", None)
+    if det_score is not None and det_score < FACE_MIN_SCORE:
+        return None
+    emb = getattr(face, "embedding", None)
     return _normalize_embedding(emb)
 
 
@@ -127,80 +127,58 @@ def mark_index_dirty() -> None:
     _index_dirty = True
 
 
-def _build_annoy_index() -> None:
-    global _annoy_index, _annoy_items, _index_dirty
-    _annoy_items = []
-    _annoy_index = None
-    candidates = db.get_people_with_embeddings()
-    if not candidates:
-        _index_dirty = False
-        return
-    items: List[Tuple[Dict[str, Any], np.ndarray]] = []
-    for person in candidates:
+def _build_embedding_cache() -> None:
+    global _embedding_matrix, _embedding_people, _index_dirty
+    people = db.get_people_with_embeddings()
+    embeddings: List[np.ndarray] = []
+    people_list: List[Dict[str, Any]] = []
+    for person in people:
         blob = person.get("face_embedding")
         if not blob:
             continue
         emb = deserialize_embedding(blob)
         if emb is None:
             continue
-        items.append((person, emb))
-    if not items:
-        _index_dirty = False
-        return
-    if AnnoyIndex is None:
-        _annoy_items = items
-        _index_dirty = False
-        return
-    index = AnnoyIndex(EMBEDDING_DIM, "angular")
-    for idx, (_, emb) in enumerate(items):
-        index.add_item(idx, emb.tolist())
-    index.build(ANNOY_TREES)
-    _annoy_items = items
-    _annoy_index = index
+        embeddings.append(emb)
+        people_list.append(person)
+    if embeddings:
+        _embedding_matrix = np.vstack(embeddings).astype(np.float32)
+        _embedding_people = people_list
+    else:
+        _embedding_matrix = None
+        _embedding_people = []
     _index_dirty = False
 
 
 def warm_up() -> None:
-    _ensure_face_app()
-    with _index_lock:
+    _get_face_app()
+    with _cache_lock:
         if _index_dirty:
-            _build_annoy_index()
+            _build_embedding_cache()
 
 
 def find_best_match(embedding: np.ndarray, threshold: float) -> Optional[Tuple[Dict[str, Any], float]]:
-    if embedding is None:
-        return None
     embedding = _normalize_embedding(embedding)
     if embedding is None:
         return None
-    with _index_lock:
+    with _cache_lock:
         if _index_dirty:
-            _build_annoy_index()
-        items = list(_annoy_items)
-        index = _annoy_index
-
-    if not items:
+            _build_embedding_cache()
+        matrix = _embedding_matrix
+        people = list(_embedding_people)
+    if matrix is None or not people:
         return None
 
-    best_person = None
-    best_score = -1.0
-    if index is None:
-        for person, stored in items:
-            score = cosine_similarity(embedding, stored)
-            if score > best_score:
-                best_score = score
-                best_person = person
+    scores = np.dot(matrix, embedding)
+    total = scores.shape[0]
+    max_candidates = max(1, min(FACE_MAX_CANDIDATES, total))
+    if total > max_candidates:
+        top_idx = np.argpartition(scores, -max_candidates)[-max_candidates:]
+        best_idx = int(top_idx[np.argmax(scores[top_idx])])
     else:
-        idxs = index.get_nns_by_vector(embedding.tolist(), min(10, len(items)))
-        for idx in idxs:
-            person, stored = items[idx]
-            score = cosine_similarity(embedding, stored)
-            if score > best_score:
-                best_score = score
-                best_person = person
+        best_idx = int(np.argmax(scores))
 
-    if best_person is None:
-        return None
+    best_score = float(scores[best_idx])
     if best_score >= threshold:
-        return best_person, best_score
+        return people[best_idx], best_score
     return None
