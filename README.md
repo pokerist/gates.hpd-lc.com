@@ -151,3 +151,6 @@ Response (مختصر لتطبيق الموبايل):
 - `ADMIN_USERNAME` و `ADMIN_PASSWORD` لتسجيل دخول الأدمن.
 - `DEBUG_PIN` لفتح صفحة الـDebug بعد تسجيل الدخول.
 - `SESSION_SECRET` لتأمين جلسات الدخول.
+- `FACE_MAX_DIM` أقصى حجم لإدخال الوجه (افتراضي 640).
+- `FACE_DET_SIZE` حجم كاشف الوجوه (افتراضي 320).
+- `ANNOY_TREES` عدد الأشجار لبناء Annoy (افتراضي 10).

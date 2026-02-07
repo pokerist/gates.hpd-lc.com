@@ -106,6 +106,10 @@ def on_startup() -> None:
     PHOTO_DIR.mkdir(parents=True, exist_ok=True)
     CARD_DIR.mkdir(parents=True, exist_ok=True)
     db.init_db()
+    try:
+        face_match.warm_up()
+    except Exception as exc:
+        print(f"[FACE] Warm-up failed: {exc}")
 
 
 def _save_person_photo(photo_image, national_id: str) -> str:
@@ -261,6 +265,10 @@ def _process_scan(image_bytes: bytes) -> dict:
                 card_path=card_filename,
                 face_embedding=embedding_blob,
             )
+            if embedding_blob:
+                face_match.mark_index_dirty()
+            if embedding_blob:
+                face_match.mark_index_dirty()
         person = db.get_person_by_nid(nid) or matched_person
 
         if person.get("blocked"):
@@ -311,6 +319,8 @@ def _process_scan(image_bytes: bytes) -> dict:
                     card_path=card_filename,
                     face_embedding=embedding_blob,
                 )
+                if embedding_blob:
+                    face_match.mark_index_dirty()
             return {
                 "status": "blocked",
                 "message": "هذا الشخص محظور من الدخول",
@@ -329,6 +339,8 @@ def _process_scan(image_bytes: bytes) -> dict:
                 card_path=card_filename,
                 face_embedding=embedding_blob,
             )
+            if embedding_blob:
+                face_match.mark_index_dirty()
         person = db.get_person_by_nid(national_id)
 
         return {
@@ -346,6 +358,8 @@ def _process_scan(image_bytes: bytes) -> dict:
         card_filename,
         embedding_blob,
     )
+    if embedding_blob:
+        face_match.mark_index_dirty()
     return {
         "status": "new",
         "message": "أول مرة - تم السماح بالدخول",
@@ -388,6 +402,8 @@ def _register_person_async(image_bytes: bytes, original_card_filename: Optional[
                 card_path=card_filename,
                 face_embedding=embedding_blob,
             )
+            if embedding_blob:
+                face_match.mark_index_dirty()
         return
 
     db.add_person(
@@ -397,6 +413,8 @@ def _register_person_async(image_bytes: bytes, original_card_filename: Optional[
         card_filename,
         embedding_blob,
     )
+    if embedding_blob:
+        face_match.mark_index_dirty()
 
 
 def _process_scan_external(image_bytes: bytes, background_tasks: Optional[BackgroundTasks]) -> dict:
@@ -661,6 +679,7 @@ def update_person(request: Request, payload: UpdatePersonRequest):
         raise HTTPException(status_code=400, detail="الرقم القومي الجديد مستخدم بالفعل")
     if not person:
         raise HTTPException(status_code=404, detail="الشخص غير موجود")
+    face_match.mark_index_dirty()
     return {"status": "ok", "person": person}
 
 
@@ -670,4 +689,5 @@ def delete_person(request: Request, national_id: str):
     deleted = db.delete_person(national_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="الشخص غير موجود")
+    face_match.mark_index_dirty()
     return {"status": "ok"}

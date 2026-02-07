@@ -98,7 +98,7 @@ function renderTable(items) {
           <button class="icon-btn" data-action="edit" data-nid="${person.national_id}" data-name="${safeName}" title="تعديل">
             ${icons.edit}
           </button>
-          <button class="icon-btn ${person.blocked ? "success" : ""}" data-action="toggle" data-nid="${person.national_id}" title="${person.blocked ? "إلغاء الحظر" : "حظر"}">
+          <button class="icon-btn ${person.blocked ? "success" : ""}" data-action="toggle" data-nid="${person.national_id}" data-blocked="${person.blocked ? "1" : "0"}" title="${person.blocked ? "إلغاء الحظر" : "حظر"}">
             ${person.blocked ? icons.allow : icons.block}
           </button>
           <button class="icon-btn danger" data-action="delete" data-nid="${person.national_id}" title="حذف">
@@ -155,7 +155,7 @@ tableBody.addEventListener("click", async (event) => {
   if (!nid) return;
 
   if (action === "toggle") {
-    const isBlocked = button.textContent.includes("إلغاء");
+    const isBlocked = button.getAttribute("data-blocked") === "1" || button.classList.contains("success");
     await toggleBlock(nid, isBlocked);
   }
 
