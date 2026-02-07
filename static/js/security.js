@@ -94,6 +94,13 @@ async function startCamera() {
     const constraintsList = [
       {
         facingMode: facingConstraint,
+        width: { ideal: 4096 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 30 },
+        resizeMode: supported.resizeMode ? "none" : undefined
+      },
+      {
+        facingMode: facingConstraint,
         width: { ideal: 1920 },
         height: { ideal: 1080 },
         frameRate: { ideal: 30 },
@@ -140,6 +147,9 @@ async function startCamera() {
       if (maxWidth && maxHeight) {
         advanced.push({ width: maxWidth, height: maxHeight });
       }
+      if (caps.aspectRatio?.max) {
+        advanced.push({ aspectRatio: caps.aspectRatio.max });
+      }
       if (caps.focusMode?.includes("continuous")) {
         advanced.push({ focusMode: "continuous" });
       }
@@ -170,9 +180,17 @@ async function captureFrame() {
   if (imageCapture && imageCapture.takePhoto) {
     try {
       const track = currentStream.getVideoTracks()[0];
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      const imageWidth = caps.imageWidth?.max || caps.width?.max || 1920;
-      const imageHeight = caps.imageHeight?.max || caps.height?.max || 1080;
+      let imageWidth = 1920;
+      let imageHeight = 1080;
+      if (imageCapture.getPhotoCapabilities) {
+        const photoCaps = await imageCapture.getPhotoCapabilities();
+        if (photoCaps?.imageWidth?.max) imageWidth = photoCaps.imageWidth.max;
+        if (photoCaps?.imageHeight?.max) imageHeight = photoCaps.imageHeight.max;
+      } else if (track?.getCapabilities) {
+        const caps = track.getCapabilities();
+        imageWidth = caps.imageWidth?.max || caps.width?.max || imageWidth;
+        imageHeight = caps.imageHeight?.max || caps.height?.max || imageHeight;
+      }
       const blob = await imageCapture.takePhoto({ imageWidth, imageHeight });
       return await cropBlobToAspect(blob, 1.58, "image/jpeg", 0.98);
     } catch (err) {

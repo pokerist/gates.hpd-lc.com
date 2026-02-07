@@ -177,6 +177,13 @@ def _enforce_rate_limit(request: Request) -> None:
 def _process_scan(image_bytes: bytes) -> dict:
     original_card_filename = _save_original_card_image(image_bytes)
     scan = run_security_scan(image_bytes)
+    if scan.error:
+        return {
+            "status": "error",
+            "message": scan.error,
+            "ocr": {"full_name": "", "national_id": ""},
+            "timings": scan.timings,
+        }
     ocr = scan.ocr
     national_id = (ocr.national_id or "").strip()
     full_name = (ocr.full_name or "").strip()
@@ -395,6 +402,8 @@ async def debug_scan(image: UploadFile = File(...)):
 
     image_bytes = await image.read()
     artifacts = prepare_debug_artifacts(image_bytes)
+    if artifacts.get("status") == "error":
+        return artifacts
     debug_image_url = f"/debug-images/debug_{artifacts['file_id']}.jpg"
 
     return {

@@ -95,6 +95,13 @@ async function startCamera() {
     const constraintsList = [
       {
         facingMode: facingConstraint,
+        width: { ideal: 4096 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 30 },
+        resizeMode: supported.resizeMode ? "none" : undefined
+      },
+      {
+        facingMode: facingConstraint,
         width: { ideal: 1920 },
         height: { ideal: 1080 },
         frameRate: { ideal: 30 },
@@ -141,6 +148,9 @@ async function startCamera() {
       if (maxWidth && maxHeight) {
         advanced.push({ width: maxWidth, height: maxHeight });
       }
+      if (caps.aspectRatio?.max) {
+        advanced.push({ aspectRatio: caps.aspectRatio.max });
+      }
       if (caps.focusMode?.includes("continuous")) {
         advanced.push({ focusMode: "continuous" });
       }
@@ -171,9 +181,17 @@ async function captureFrame() {
   if (imageCapture && imageCapture.takePhoto) {
     try {
       const track = currentStream.getVideoTracks()[0];
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      const imageWidth = caps.imageWidth?.max || caps.width?.max || 1920;
-      const imageHeight = caps.imageHeight?.max || caps.height?.max || 1080;
+      let imageWidth = 1920;
+      let imageHeight = 1080;
+      if (imageCapture.getPhotoCapabilities) {
+        const photoCaps = await imageCapture.getPhotoCapabilities();
+        if (photoCaps?.imageWidth?.max) imageWidth = photoCaps.imageWidth.max;
+        if (photoCaps?.imageHeight?.max) imageHeight = photoCaps.imageHeight.max;
+      } else if (track?.getCapabilities) {
+        const caps = track.getCapabilities();
+        imageWidth = caps.imageWidth?.max || caps.width?.max || imageWidth;
+        imageHeight = caps.imageHeight?.max || caps.height?.max || imageHeight;
+      }
       const blob = await imageCapture.takePhoto({ imageWidth, imageHeight });
       return await cropBlobToAspect(blob, 1.58, "image/jpeg", 0.98);
     } catch (err) {
@@ -238,6 +256,7 @@ async function sendImage(blob) {
 }
 
 function renderDebug(data) {
+  const timings = data.timings || {};
   if (data.debug_image_url) {
     debugImage.src = `${data.debug_image_url}?t=${Date.now()}`;
     debugImage.style.display = "block";
@@ -251,11 +270,46 @@ function renderDebug(data) {
     debugFaceImage.style.display = "block";
   }
 
+  if (data.status === "error") {
+    const message = data.message || "تعذر تحليل الصورة";
+    debugFinal.innerHTML = `
+      <div class="field-item"><strong>النتيجة:</strong> <span>${message}</span></div>
+    `;
+    debugTess.innerHTML = "—";
+    debugFields.innerHTML = "—";
+    debugDocai.innerHTML = "—";
+
+    const timingLabels = {
+      total_ms: "الإجمالي",
+      model_load_ms: "تحميل الموديلات",
+      decode_ms: "قراءة الصورة",
+      detect_card_ms: "اكتشاف البطاقة",
+      detect_fields_ms: "اكتشاف الحقول",
+      extract_photo_ms: "استخراج الوجه",
+      face_embedding_ms: "بصمة الوجه",
+      face_match_ms: "مطابقة الوجه",
+      docai_ms: "Document AI",
+      tesseract_nid_ms: "Tesseract الرقم",
+      tesseract_name_ms: "Tesseract الاسم"
+    };
+    const timingEntries = Object.entries(timings);
+    if (timingEntries.length) {
+      debugTimings.innerHTML = timingEntries.map(([key, value]) => {
+        const label = timingLabels[key] || key;
+        const num = Number(value);
+        const text = Number.isFinite(num) ? `${num.toFixed(2)} ms` : "—";
+        return `<div class="field-item"><span>${label}</span><span>${text}</span></div>`;
+      }).join("");
+    } else {
+      debugTimings.innerHTML = "—";
+    }
+    return;
+  }
+
   const fields = data.fields || [];
   const tess = data.tesseract || {};
   const final = data.final || {};
   const docaiEntities = data.docai_entities || [];
-  const timings = data.timings || {};
 
   debugFinal.innerHTML = `
     <div class="field-item"><strong>الاسم:</strong> <span>${final.full_name || "—"}</span></div>

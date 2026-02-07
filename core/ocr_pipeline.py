@@ -42,13 +42,18 @@ class OcrResult:
 class ScanResult:
     ocr: OcrResult
     photo_image: Optional[np.ndarray]
-    card_image: np.ndarray
+    card_image: Optional[np.ndarray]
     fields: List[Dict[str, Any]]
-    card_bbox: Tuple[int, int, int, int]
+    card_bbox: Optional[Tuple[int, int, int, int]]
     docai: Dict[str, Any]
     face_match: Optional[Dict[str, Any]]
     face_embedding: Optional[np.ndarray]
     timings: Dict[str, float]
+    error: Optional[str] = None
+
+
+class CardNotFoundError(Exception):
+    pass
 
 
 def _ensure_models() -> None:
@@ -486,6 +491,8 @@ def _prepare_assets_timed(
     t0 = perf_counter()
     card_bbox = _detect_card_bbox(image)
     timings["detect_card_ms"] = (perf_counter() - t0) * 1000
+    if not card_bbox:
+        raise CardNotFoundError("فشل إيجاد بطاقة شخصية في الصورة. برجاء التأكد من التصوير بشكل صحيح")
 
     if card_bbox:
         card_image = _crop(image, card_bbox)
@@ -656,7 +663,31 @@ def _tesseract_name_from_fields(card_image: np.ndarray, fields: List[Dict[str, A
 def run_security_scan(image_bytes: bytes) -> ScanResult:
     timings: Dict[str, float] = {}
     total_start = perf_counter()
-    _, card_image, fields, card_bbox, photo = _prepare_assets_timed(image_bytes, timings)
+    try:
+        _, card_image, fields, card_bbox, photo = _prepare_assets_timed(image_bytes, timings)
+    except CardNotFoundError as exc:
+        timings["total_ms"] = (perf_counter() - total_start) * 1000
+        if timings:
+            log_payload = {key: round(value, 2) for key, value in timings.items()}
+            print("[TIMING]", log_payload)
+        ocr = OcrResult(
+            full_name="",
+            national_id="",
+            tesseract_raw={},
+            debug={},
+        )
+        return ScanResult(
+            ocr=ocr,
+            photo_image=None,
+            card_image=None,
+            fields=[],
+            card_bbox=None,
+            docai={},
+            face_match=None,
+            face_embedding=None,
+            timings=timings,
+            error=str(exc),
+        )
     face_match_info = None
     face_embedding = None
 
@@ -769,6 +800,7 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
         face_match=face_match_info,
         face_embedding=face_embedding,
         timings=timings,
+        error=None,
     )
 
 
@@ -794,6 +826,12 @@ def _save_debug_variant(image: np.ndarray, name: str, file_id: str) -> str:
 
 def prepare_debug_artifacts(image_bytes: bytes) -> Dict[str, Any]:
     scan = run_security_scan(image_bytes)
+    if scan.error:
+        return {
+            "status": "error",
+            "message": scan.error,
+            "timings": scan.timings,
+        }
     card_image = scan.card_image
     fields = scan.fields
     card_bbox = scan.card_bbox
