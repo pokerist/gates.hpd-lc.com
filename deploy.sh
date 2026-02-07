@@ -44,6 +44,12 @@ MODE="${MODE_ARG:-${APP_ENV:-development}}"
 START_POSTGRES="${START_POSTGRES:-0}"
 START_REDIS="${START_REDIS:-}"
 USE_SYSTEMD="${USE_SYSTEMD:-}"
+HARDENING_ENABLE="${HARDENING_ENABLE:-}"
+FIREWALL_ENABLE="${FIREWALL_ENABLE:-}"
+FIREWALL_ALLOW_PORTS="${FIREWALL_ALLOW_PORTS:-22,80,443,5000}"
+LOGROTATE_ENABLE="${LOGROTATE_ENABLE:-}"
+RAW_RETENTION_DAYS="${RAW_RETENTION_DAYS:-2}"
+DEBUG_RETENTION_DAYS="${DEBUG_RETENTION_DAYS:-30}"
 
 if [[ "$MODE" == "prod" || "$MODE" == "production" ]]; then
   export APP_ENV="production"
@@ -62,6 +68,62 @@ if [ "$PRODUCTION" = "1" ] && [ -z "${USE_SYSTEMD}" ] && command -v systemctl >/
   USE_SYSTEMD=1
 fi
 USE_SYSTEMD="${USE_SYSTEMD:-0}"
+
+if [ "$PRODUCTION" = "1" ] && [ -z "${HARDENING_ENABLE}" ]; then
+  HARDENING_ENABLE=1
+fi
+HARDENING_ENABLE="${HARDENING_ENABLE:-0}"
+if [ "$HARDENING_ENABLE" = "1" ] && [ -z "${FIREWALL_ENABLE}" ]; then
+  FIREWALL_ENABLE=1
+fi
+FIREWALL_ENABLE="${FIREWALL_ENABLE:-0}"
+if [ "$HARDENING_ENABLE" = "1" ] && [ -z "${LOGROTATE_ENABLE}" ]; then
+  LOGROTATE_ENABLE=1
+fi
+LOGROTATE_ENABLE="${LOGROTATE_ENABLE:-0}"
+
+if [ "$HARDENING_ENABLE" = "1" ] && [ "$FIREWALL_ENABLE" = "1" ]; then
+  echo "[SECURITY] إعداد جدار الحماية..."
+  $SUDO apt-get install -y ufw
+  $SUDO ufw default deny incoming || true
+  $SUDO ufw default allow outgoing || true
+  IFS=',' read -ra PORT_LIST <<< "$FIREWALL_ALLOW_PORTS"
+  for port in "${PORT_LIST[@]}"; do
+    port="$(echo "$port" | xargs)"
+    if [ -n "$port" ]; then
+      $SUDO ufw allow "${port}/tcp" || true
+    fi
+  done
+  $SUDO ufw --force enable || true
+fi
+
+if [ "$HARDENING_ENABLE" = "1" ] && [ "$LOGROTATE_ENABLE" = "1" ]; then
+  echo "[SECURITY] إعداد logrotate..."
+  $SUDO apt-get install -y logrotate
+  if command -v logrotate >/dev/null 2>&1; then
+    $SUDO tee /etc/logrotate.d/gates-app >/dev/null <<EOF
+$ROOT/data/logs/*.log {
+  size 50M
+  rotate 5
+  compress
+  missingok
+  notifempty
+  copytruncate
+}
+EOF
+  fi
+fi
+
+if [ -n "${RAW_RETENTION_DAYS}" ]; then
+  if [ -d "$ROOT/data/raw" ]; then
+    find "$ROOT/data/raw" -type f -mtime +"$RAW_RETENTION_DAYS" -delete || true
+  fi
+fi
+if [ -n "${DEBUG_RETENTION_DAYS}" ]; then
+  if [ -d "$ROOT/data/debug" ]; then
+    find "$ROOT/data/debug" -type f -mtime +"$DEBUG_RETENTION_DAYS" -delete || true
+  fi
+fi
 
 if [ "$PRODUCTION" = "1" ]; then
   if [ -z "${DATABASE_URL:-}" ] && [ -z "${POSTGRES_URL:-}" ]; then
@@ -95,10 +157,15 @@ fi
 if [ "$START_REDIS" = "1" ]; then
   echo "[CACHE] تثبيت وتشغيل Redis..."
   $SUDO apt-get install -y redis-server
+  if [ -f /etc/redis/redis.conf ]; then
+    $SUDO sed -i "s/^#*bind .*/bind 127.0.0.1 ::1/" /etc/redis/redis.conf || true
+    $SUDO sed -i "s/^#*protected-mode .*/protected-mode yes/" /etc/redis/redis.conf || true
+  fi
   if command -v systemctl >/dev/null 2>&1; then
     $SUDO systemctl enable --now redis-server || true
+    $SUDO systemctl restart redis-server || true
   else
-    $SUDO service redis-server start || true
+    $SUDO service redis-server restart || true
   fi
   if [ -z "${REDIS_URL:-}" ]; then
     export REDIS_URL="redis://localhost:6379/0"

@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-gates}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gatespass}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - gates_pg_data:/var/lib/postgresql/data
 

@@ -26,6 +26,7 @@ bash deploy.sh production
 - تشغيل PostgreSQL (إن كان `START_POSTGRES=1` و Docker متوفر).
 - تشغيل Redis و RQ Worker (إن كان مفعلاً).
 - تشغيل التطبيق على المنفذ `5000`.
+- تفعيل التصلّب الأمني (Firewall + Logrotate + تنظيف ملفات مؤقتة) إذا كان مفعّلًا.
 
 ## 3) تشغيل دائم بعد إعادة التشغيل
 إذا كان `USE_SYSTEMD=1` و `systemctl` متوفر:
@@ -62,21 +63,38 @@ POSTGRES_PORT=5432
 - يتم تشغيلهما تلقائياً في production عند تفعيل `START_REDIS=1`.
 - اللوجات في `data/logs/rq.log`.
 
-## 6) فحوصات سريعة
+## 6) التصلّب الأمني (Hardening)
+افتراضياً في الإنتاج يتم:
+- تفعيل UFW وفتح المنافذ المحددة.
+- ربط Redis على `127.0.0.1` مع `protected-mode yes`.
+- تدوير اللوجات تلقائياً لتفادي امتلاء القرص.
+- تنظيف الملفات المؤقتة القديمة داخل `data/raw` و `data/debug`.
+
+التحكم عبر `.env`:
+```
+HARDENING_ENABLE=1
+FIREWALL_ENABLE=1
+FIREWALL_ALLOW_PORTS=22,80,443,5000
+LOGROTATE_ENABLE=1
+RAW_RETENTION_DAYS=2
+DEBUG_RETENTION_DAYS=30
+```
+
+## 7) فحوصات سريعة
 - Health Check: `GET /api/health`
 - الدخول إلى لوحة الأدمن: `GET /login`
 - اختبار API الخارجي عبر `/api/v1/security/scan-base64`
 
-## 7) السجلات (Logs)
+## 8) السجلات (Logs)
 - `data/logs/access.log`
 - `data/logs/error.log`
 - `data/logs/rq.log`
 
-## 8) النسخ الاحتياطي
+## 9) النسخ الاحتياطي
 - قاعدة البيانات: `pg_dump` بشكل دوري.
 - الصور: انسخ مجلد `data/photos` و `data/cards`.
 
-## 9) Rate Limiting
+## 10) Rate Limiting
 القيم من `.env`:
 ```
 RATE_LIMIT_ENABLED=1

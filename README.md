@@ -133,6 +133,7 @@ bash deploy.sh production
 - يستخدم Gunicorn + Uvicorn workers.
 - اللوجات داخل `data/logs/`.
 - يشغّل Redis و RQ تلقائياً إن كان مفعلًا.
+- في وضع الإنتاج يتم تفعيل التصلّب الأمني (Firewall + Logrotate + تنظيف ملفات مؤقتة) افتراضياً.
 - لو النظام يدعم systemd سيتم إنشاء خدمات دائمة تلقائياً.
 
 ## الخدمات في Production (systemd)
@@ -169,6 +170,12 @@ systemctl restart gates-app gates-rq
 - `REDIS_URL`, `RQ_QUEUE`, `RQ_JOB_TIMEOUT` لتشغيل الخلفية.
 - `START_REDIS=1` لتثبيت وتشغيل Redis عبر `deploy.sh`.
 - `USE_SYSTEMD=1` لتشغيل الخدمات تلقائياً بعد إعادة التشغيل.
+- `HARDENING_ENABLE=1` لتفعيل إعدادات الأمان التلقائية في الإنتاج.
+- `FIREWALL_ENABLE=1` لتفعيل UFW.
+- `FIREWALL_ALLOW_PORTS=22,80,443,5000` المنافذ المسموحة.
+- `LOGROTATE_ENABLE=1` لتدوير اللوجات تلقائياً.
+- `RAW_RETENTION_DAYS=2` مدة الاحتفاظ بالملفات المؤقتة.
+- `DEBUG_RETENTION_DAYS=30` مدة الاحتفاظ بصور الـ Debug.
 - `APP_ENV=production` لتفعيل PostgreSQL تلقائياً.
 
 ## أمان وتشغيل موثوق
@@ -176,3 +183,7 @@ systemctl restart gates-app gates-rq
 - فعّل HTTPS عبر Nginx أو أي Reverse Proxy خارجي.
 - راقب `data/logs/error.log` لأي أخطاء.
 - نفّذ نسخ احتياطي دوري لقاعدة البيانات والصور.
+- عند التشغيل الإنتاجي يتم تفعيل UFW افتراضياً على المنافذ المحددة.
+- PostgreSQL عبر Docker مربوط بـ `127.0.0.1` فقط.
+- Redis يتم ربطه بـ `127.0.0.1` مع `protected-mode yes`.
+- يتم تدوير اللوجات تلقائياً لمنع امتلاء القرص.
