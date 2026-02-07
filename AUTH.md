@@ -16,16 +16,7 @@ X-API-Key: <SECURITY_API_KEY>
 ```
 
 ## نقاط النهاية المحمية
-1) رفع صورة كملف:
-```
-POST /api/v1/security/scan
-Content-Type: multipart/form-data
-```
-
-Body:
-- `image`: ملف الصورة
-
-2) رفع صورة Base64:
+رفع صورة Base64:
 ```
 POST /api/v1/security/scan-base64
 Content-Type: application/json

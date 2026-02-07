@@ -1,6 +1,7 @@
 const tableBody = document.querySelector("#peopleTable tbody");
 const searchInput = document.getElementById("searchInput");
 const refreshBtn = document.getElementById("refreshBtn");
+const debugAccessBtn = document.getElementById("debugAccessBtn");
 
 async function fetchPeople() {
   const query = searchInput.value.trim();
@@ -58,6 +59,10 @@ function renderTable(items) {
     const statusBadge = person.blocked
       ? '<span class="badge blocked">محظور</span>'
       : '<span class="badge allowed">مسموح</span>';
+    const needsManual = !person.full_name || (person.national_id || "").startsWith("TEMP-");
+    const displayName = person.full_name || "—";
+    const displayNid = (person.national_id || "").startsWith("TEMP-") ? "—" : (person.national_id || "—");
+    const manualBadge = needsManual ? '<span class="badge warning">يحتاج إدخال يدوي</span>' : "";
 
     const photoCell = person.photo_path
       ? `<img src="/person-photos/${person.photo_path}" alt="photo" style="width:48px;height:60px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,0.2);" />`
@@ -79,8 +84,11 @@ function renderTable(items) {
     row.innerHTML = `
       <td>${photoCell}</td>
       <td>${cardCell}</td>
-      <td>${person.full_name || "—"}</td>
-      <td>${person.national_id}</td>
+      <td>
+        <div>${displayName}</div>
+        ${manualBadge}
+      </td>
+      <td>${displayNid}</td>
       <td>${statusBadge}</td>
       <td>${person.block_reason || "—"}</td>
       <td>${person.visits ?? 0}</td>
@@ -181,6 +189,25 @@ searchInput.addEventListener("input", () => {
 });
 
 refreshBtn.addEventListener("click", fetchPeople);
+
+debugAccessBtn?.addEventListener("click", async () => {
+  const pin = prompt("أدخل رمز الدخول للـ Debug");
+  if (pin === null) return;
+  try {
+    const res = await fetch("/api/debug/unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pin: pin.trim() })
+    });
+    if (res.ok) {
+      window.location.href = "/debug";
+      return;
+    }
+  } catch (err) {
+    console.error(err);
+  }
+  alert("الرمز غير صحيح");
+});
 
 const previewPanel = document.getElementById("cardPreviewPanel");
 const previewBackdrop = document.getElementById("cardPreviewBackdrop");

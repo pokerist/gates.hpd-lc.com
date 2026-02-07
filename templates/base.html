@@ -16,12 +16,12 @@
           <h1>Gates</h1>
         </div>
       </div>
+      {% if is_authenticated %}
       <nav class="nav-links">
-        <a class="btn btn-outline" href="/">الرئيسية</a>
-        <a class="btn btn-outline" href="/security">الأمن</a>
-        <a class="btn btn-outline" href="/admin">الأدمن</a>
-        <a class="btn btn-outline" href="/settings">الإعدادات</a>
+        <a class="btn btn-outline" href="/admin">لوحة الأدمن</a>
+        <a class="btn btn-outline" href="/logout">تسجيل الخروج</a>
       </nav>
+      {% endif %}
     </header>
 
     {% block content %}{% endblock %}

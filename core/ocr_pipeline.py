@@ -867,6 +867,8 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
     timings["docai_ms"] = (perf_counter() - t0) * 1000
     full_name = (docai_payload.get("full_name") or "").strip()
     docai_nid = _normalize_digits(docai_payload.get("national_id") or "")
+    if len(docai_nid) > 14:
+        docai_nid = ""
 
     tesseract_payload = {
         "full_name_raw": "",
@@ -922,6 +924,81 @@ def run_security_scan(image_bytes: bytes) -> ScanResult:
         fields=fields,
         card_bbox=card_bbox,
         docai=docai_payload,
+        face_match=face_match_info,
+        face_embedding=face_embedding,
+        timings=timings,
+        error=None,
+    )
+
+
+def run_face_match_scan(image_bytes: bytes) -> ScanResult:
+    timings: Dict[str, float] = {}
+    total_start = perf_counter()
+    try:
+        _, card_image, fields, card_bbox, photo = _prepare_assets_timed(image_bytes, timings)
+    except CardNotFoundError as exc:
+        timings["total_ms"] = (perf_counter() - total_start) * 1000
+        if timings:
+            log_payload = {key: round(value, 2) for key, value in timings.items()}
+            print("[TIMING]", log_payload)
+        empty_ocr = OcrResult(full_name="", national_id="", tesseract_raw={}, debug={})
+        return ScanResult(
+            ocr=empty_ocr,
+            photo_image=None,
+            card_image=None,
+            fields=[],
+            card_bbox=None,
+            docai={},
+            face_match=None,
+            face_embedding=None,
+            timings=timings,
+            error=str(exc),
+        )
+
+    face_match_info = None
+    face_embedding = None
+    if app_settings.get_face_match_enabled() and photo is not None:
+        t0 = perf_counter()
+        face_embedding = face_match.extract_face_embedding(photo)
+        timings["face_embedding_ms"] = (perf_counter() - t0) * 1000
+        if face_embedding is not None:
+            threshold = app_settings.get_face_match_threshold()
+            t0 = perf_counter()
+            match = face_match.find_best_match(face_embedding, threshold)
+            timings["face_match_ms"] = (perf_counter() - t0) * 1000
+            if match:
+                person, score = match
+                print(f"[FACE] Match score={score:.3f} nid={person.get('national_id')}")
+                person_payload = {
+                    "national_id": person.get("national_id"),
+                    "full_name": person.get("full_name"),
+                    "blocked": person.get("blocked"),
+                    "block_reason": person.get("block_reason"),
+                    "visits": person.get("visits"),
+                    "created_at": person.get("created_at"),
+                    "last_seen_at": person.get("last_seen_at"),
+                    "photo_path": person.get("photo_path"),
+                    "card_path": person.get("card_path"),
+                }
+                face_match_info = {
+                    "matched": True,
+                    "score": score,
+                    "person": person_payload,
+                }
+
+    timings["total_ms"] = (perf_counter() - total_start) * 1000
+    if timings:
+        log_payload = {key: round(value, 2) for key, value in timings.items()}
+        print("[TIMING]", log_payload)
+
+    empty_ocr = OcrResult(full_name="", national_id="", tesseract_raw={}, debug={})
+    return ScanResult(
+        ocr=empty_ocr,
+        photo_image=photo,
+        card_image=card_image,
+        fields=fields,
+        card_bbox=card_bbox,
+        docai={},
         face_match=face_match_info,
         face_embedding=face_embedding,
         timings=timings,

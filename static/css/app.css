@@ -78,6 +78,65 @@ header {
   gap: 6px;
 }
 
+.hero-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.login-wrap {
+  min-height: calc(100vh - 220px);
+  display: grid;
+  place-items: center;
+}
+
+.login-card {
+  width: min(480px, 100%);
+  text-align: center;
+  padding: 28px;
+}
+
+.login-card h2 {
+  font-size: 1.7rem;
+  margin-bottom: 6px;
+}
+
+.login-card p {
+  color: var(--muted);
+  margin-bottom: 18px;
+}
+
+.login-form {
+  display: grid;
+  gap: 12px;
+  text-align: right;
+}
+
+.login-form input {
+  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 0.98rem;
+}
+
+.login-form input:focus {
+  outline: none;
+  border-color: rgba(96, 165, 250, 0.6);
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.15);
+}
+
+.login-error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #fecaca;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+}
+
 .nav-links {
   display: flex;
   gap: 10px;
@@ -441,6 +500,11 @@ canvas {
 .badge.allowed {
   background: rgba(34, 197, 94, 0.15);
   color: #bbf7d0;
+}
+
+.badge.warning {
+  background: rgba(234, 179, 8, 0.15);
+  color: #fde68a;
 }
 
 .action-group {

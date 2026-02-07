@@ -99,15 +99,12 @@ export DOC_AI_JPEG_QUALITY=85
 يمكنك استخدام ملف `.env` بدل التصدير اليدوي. راجع `.env.example`.
 
 ## المسارات
-- `/` الصفحة الرئيسية
-- `/security` واجهة الأمن
-- `/admin` لوحة الأدمن
-- `/settings` صفحة الإعدادات
-- `/debug` Manual Debug (محمي برمز من الصفحة الرئيسية)
+- `/login` تسجيل الدخول
+- `/admin` لوحة الأدمن (بعد تسجيل الدخول)
+- `/debug` Manual Debug + الإعدادات (يتطلب PIN بعد تسجيل الدخول)
 
 ## REST API للأمن (تطبيق الموبايل)
 Endpoint:
-- `POST /api/v1/security/scan`
 - `POST /api/v1/security/scan-base64`
 
 Headers:
@@ -123,8 +120,25 @@ Body (application/json):
 }
 ```
 
+Response (مختصر لتطبيق الموبايل):
+```
+{
+  "status": "allowed|blocked|error",
+  "message": "مسموح بالدخول",
+  "is_new": true,
+  "reason": "سبب الحظر (لو blocked)"
+}
+```
+
+ملاحظة: الرد سريع (Face Match فقط)، وأي تسجيل جديد يتم استكماله في الخلفية.
+
 ملاحظة: لاستخدامه، عرّف المتغير `SECURITY_API_KEY` في السيرفر.
 راجع `AUTH.md` للتفاصيل الكاملة.
+
+## الدخول للويب
+- `/login` لتسجيل دخول الأدمن.
+- بيانات الدخول تُقرأ من `.env` عبر `ADMIN_USERNAME` و`ADMIN_PASSWORD`.
+- صفحة الـDebug تتطلب إدخال PIN (`DEBUG_PIN`) بعد تسجيل الدخول.
 
 ## ملاحظات
 - النماذج موجودة داخل `models/`.
@@ -132,3 +146,8 @@ Body (application/json):
 - قاعدة البيانات: `data/gate.db`.
 - صور الأفراد: `data/photos/`.
 - صور البطاقات: `data/cards/`.
+
+## متغيرات البيئة المهمة
+- `ADMIN_USERNAME` و `ADMIN_PASSWORD` لتسجيل دخول الأدمن.
+- `DEBUG_PIN` لفتح صفحة الـDebug بعد تسجيل الدخول.
+- `SESSION_SECRET` لتأمين جلسات الدخول.

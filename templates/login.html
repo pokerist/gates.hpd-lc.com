@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="login-wrap">
+  <div class="card login-card">
+    <h2>تسجيل الدخول</h2>
+    <p>الدخول مخصص للأدمن والتقني المسؤول فقط.</p>
+    <form class="login-form" method="post" action="/login">
+      <label>اسم المستخدم</label>
+      <input type="text" name="username" placeholder="أدخل اسم المستخدم" required />
+      <label>كلمة المرور</label>
+      <input type="password" name="password" placeholder="أدخل كلمة المرور" required />
+      {% if error %}
+      <div class="login-error">{{ error }}</div>
+      {% endif %}
+      <button class="btn btn-primary" type="submit">دخول</button>
+    </form>
+  </div>
+</section>
+{% endblock %}
