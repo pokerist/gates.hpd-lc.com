@@ -7,11 +7,12 @@ import datetime
 import base64
 import binascii
 import time
+import json
 from collections import deque
 from threading import Lock
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -28,6 +29,7 @@ from core import tasks as background_tasks_runner
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "1") == "1"
 RATE_LIMIT_WINDOW_SEC = int(os.getenv("RATE_LIMIT_WINDOW_SEC", "60"))
 RATE_LIMIT_MAX = int(os.getenv("RATE_LIMIT_MAX", "20"))
+SSE_POLL_INTERVAL_SEC = float(os.getenv("SSE_POLL_INTERVAL_SEC", "2"))
 TRUST_PROXY = os.getenv("TRUST_PROXY", "1") == "1"
 _rate_lock = Lock()
 _rate_buckets: dict[str, deque[float]] = {}
@@ -597,6 +599,59 @@ def list_people(request: Request, q: Optional[str] = None):
     _require_admin(request)
     people = db.search_people(q)
     return {"items": people}
+
+
+@app.get("/api/admin/stream")
+def admin_stream(request: Request, cursor_ts: Optional[str] = None, cursor_id: Optional[int] = None):
+    _require_admin(request)
+    try:
+        cursor_id_value = int(cursor_id or 0)
+    except Exception:
+        cursor_id_value = 0
+    cursor_ts_value = (cursor_ts or "").strip() or "1970-01-01T00:00:00"
+
+    def _event(name: str, payload: dict) -> str:
+        data = json.dumps(payload, ensure_ascii=False)
+        return f"event: {name}\ndata: {data}\n\n"
+
+    def _stream():
+        nonlocal cursor_ts_value, cursor_id_value
+        while True:
+            try:
+                changes = db.get_people_updated_since(cursor_ts_value, cursor_id_value, limit=500)
+                if changes:
+                    last = changes[-1]
+                    cursor_ts_value = last.get("updated_at") or cursor_ts_value
+                    cursor_id_value = last.get("id") or cursor_id_value
+                    yield _event(
+                        "changed",
+                        {
+                            "count": len(changes),
+                            "cursor_ts": cursor_ts_value,
+                            "cursor_id": cursor_id_value,
+                        },
+                    )
+                else:
+                    yield _event(
+                        "heartbeat",
+                        {"time": datetime.datetime.utcnow().isoformat() + "Z"},
+                    )
+                time.sleep(SSE_POLL_INTERVAL_SEC)
+            except GeneratorExit:
+                break
+            except Exception as exc:
+                print(f"[SSE] Stream error: {exc}")
+                yield _event(
+                    "heartbeat",
+                    {"time": datetime.datetime.utcnow().isoformat() + "Z"},
+                )
+                time.sleep(SSE_POLL_INTERVAL_SEC)
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(_stream(), media_type="text/event-stream", headers=headers)
 
 
 @app.get("/api/health")

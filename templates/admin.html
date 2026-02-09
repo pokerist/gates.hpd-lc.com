@@ -22,6 +22,20 @@
   </div>
 </section>
 
+<section class="card issues-card" style="margin-bottom: 16px;">
+  <div class="issues-header">
+    <div>
+      <h3>السجلات التي تحتاج إدخال يدوي</h3>
+      <p>أي سجل ناقص الاسم أو الرقم القومي يظهر هنا تلقائياً.</p>
+    </div>
+    <div class="issues-meta">
+      <span id="manualIssuesCount" class="badge warning">0</span>
+      <span id="liveStatus" class="live-status">جاري الاتصال...</span>
+    </div>
+  </div>
+  <div id="manualIssuesList" class="issues-list"></div>
+</section>
+
 <section class="card">
   <div class="table-wrap">
     <table class="table" id="peopleTable">
@@ -60,6 +74,8 @@
     </div>
   </div>
 </aside>
+
+<div id="toastContainer" class="toast-container" aria-live="polite" aria-atomic="false"></div>
 {% endblock %}
 
 {% block scripts %}

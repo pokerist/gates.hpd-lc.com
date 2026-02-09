@@ -30,6 +30,10 @@ def _detect_backend() -> str:
 DB_BACKEND = _detect_backend()
 
 
+def _utcnow() -> str:
+    return datetime.datetime.utcnow().isoformat()
+
+
 def _sqlite_path() -> Path:
     app_env = os.getenv("APP_ENV", "development").lower()
     default_name = "gate_prod.db" if app_env in {"prod", "production"} else "gate_dev.db"
@@ -147,6 +151,7 @@ def _row_to_dict(row: Any) -> Dict[str, Any]:
         "visits": _row_value(row, "visits", 0),
         "created_at": _row_value(row, "created_at"),
         "last_seen_at": _row_value(row, "last_seen_at"),
+        "updated_at": _row_value(row, "updated_at"),
         "photo_path": _row_value(row, "photo_path"),
         "card_path": _row_value(row, "card_path"),
     }
@@ -173,6 +178,7 @@ def _init_db_sqlite() -> None:
                 visits INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 last_seen_at TEXT,
+                updated_at TEXT,
                 photo_path TEXT,
                 card_path TEXT,
                 face_embedding BLOB
@@ -209,6 +215,7 @@ def _init_db_sqlite() -> None:
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
             ("docai_jpeg_quality", "85"),
         )
+        _ensure_updated_at_sqlite(conn)
 
 
 def _init_db_postgres() -> None:
@@ -223,6 +230,7 @@ def _init_db_postgres() -> None:
             visits INTEGER NOT NULL DEFAULT 0,
             created_at TIMESTAMP NOT NULL,
             last_seen_at TIMESTAMP,
+            updated_at TIMESTAMP,
             photo_path TEXT,
             card_path TEXT,
             face_embedding BYTEA
@@ -259,6 +267,30 @@ def _init_db_postgres() -> None:
         "INSERT INTO settings (key, value) VALUES (%s, %s) ON CONFLICT (key) DO NOTHING",
         ("docai_jpeg_quality", "85"),
     )
+    _ensure_updated_at_postgres()
+
+
+def _ensure_updated_at_sqlite(conn) -> None:
+    try:
+        columns = conn.execute("PRAGMA table_info(people);").fetchall()
+    except Exception:
+        return
+    has_updated = False
+    for col in columns:
+        name = col[1] if len(col) > 1 else None
+        if name == "updated_at":
+            has_updated = True
+            break
+    if not has_updated:
+        conn.execute("ALTER TABLE people ADD COLUMN updated_at TEXT")
+    conn.execute(
+        "UPDATE people SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''"
+    )
+
+
+def _ensure_updated_at_postgres() -> None:
+    _execute("ALTER TABLE people ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP")
+    _execute("UPDATE people SET updated_at = created_at WHERE updated_at IS NULL")
 
 
 def get_person_by_nid(national_id: str) -> Optional[Dict[str, Any]]:
@@ -278,7 +310,7 @@ def add_person(
     card_path: Optional[str] = None,
     face_embedding: Optional[bytes] = None,
 ) -> Dict[str, Any]:
-    now = datetime.datetime.utcnow().isoformat()
+    now = _utcnow()
     _execute(
         """
         INSERT INTO people (
@@ -289,22 +321,23 @@ def add_person(
             visits,
             created_at,
             last_seen_at,
+            updated_at,
             photo_path,
             card_path,
             face_embedding
         )
-        VALUES (%s, %s, %s, NULL, 1, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, NULL, 1, %s, %s, %s, %s, %s, %s)
         """,
-        (national_id, full_name, False, now, now, photo_path, card_path, face_embedding),
+        (national_id, full_name, False, now, now, now, photo_path, card_path, face_embedding),
     )
     return get_person_by_nid(national_id)  # type: ignore[return-value]
 
 
 def increment_visit(national_id: str) -> Optional[Dict[str, Any]]:
-    now = datetime.datetime.utcnow().isoformat()
+    now = _utcnow()
     _execute(
-        "UPDATE people SET visits = visits + 1, last_seen_at = %s WHERE national_id = %s",
-        (now, national_id),
+        "UPDATE people SET visits = visits + 1, last_seen_at = %s, updated_at = %s WHERE national_id = %s",
+        (now, now, national_id),
     )
     return get_person_by_nid(national_id)
 
@@ -312,9 +345,10 @@ def increment_visit(national_id: str) -> Optional[Dict[str, Any]]:
 def update_name_if_missing(national_id: str, full_name: str) -> Optional[Dict[str, Any]]:
     if not full_name:
         return get_person_by_nid(national_id)
+    now = _utcnow()
     _execute(
-        "UPDATE people SET full_name = COALESCE(NULLIF(full_name, ''), %s) WHERE national_id = %s",
-        (full_name, national_id),
+        "UPDATE people SET full_name = COALESCE(NULLIF(full_name, ''), %s), updated_at = %s WHERE national_id = %s",
+        (full_name, now, national_id),
     )
     return get_person_by_nid(national_id)
 
@@ -322,9 +356,10 @@ def update_name_if_missing(national_id: str, full_name: str) -> Optional[Dict[st
 def update_photo_if_missing(national_id: str, photo_path: Optional[str]) -> Optional[Dict[str, Any]]:
     if not photo_path:
         return get_person_by_nid(national_id)
+    now = _utcnow()
     _execute(
-        "UPDATE people SET photo_path = COALESCE(NULLIF(photo_path, ''), %s) WHERE national_id = %s",
-        (photo_path, national_id),
+        "UPDATE people SET photo_path = COALESCE(NULLIF(photo_path, ''), %s), updated_at = %s WHERE national_id = %s",
+        (photo_path, now, national_id),
     )
     return get_person_by_nid(national_id)
 
@@ -332,9 +367,10 @@ def update_photo_if_missing(national_id: str, photo_path: Optional[str]) -> Opti
 def update_card_if_missing(national_id: str, card_path: Optional[str]) -> Optional[Dict[str, Any]]:
     if not card_path:
         return get_person_by_nid(national_id)
+    now = _utcnow()
     _execute(
-        "UPDATE people SET card_path = COALESCE(NULLIF(card_path, ''), %s) WHERE national_id = %s",
-        (card_path, national_id),
+        "UPDATE people SET card_path = COALESCE(NULLIF(card_path, ''), %s), updated_at = %s WHERE national_id = %s",
+        (card_path, now, national_id),
     )
     return get_person_by_nid(national_id)
 
@@ -358,6 +394,8 @@ def update_media(
         params.append(face_embedding)
     if not updates:
         return get_person_by_nid(national_id)
+    updates.append("updated_at = %s")
+    params.append(_utcnow())
     params.append(national_id)
     _execute(
         f"UPDATE people SET {', '.join(updates)} WHERE national_id = %s",
@@ -367,9 +405,10 @@ def update_media(
 
 
 def set_block_status(national_id: str, blocked: bool, reason: Optional[str]) -> Optional[Dict[str, Any]]:
+    now = _utcnow()
     _execute(
-        "UPDATE people SET blocked = %s, block_reason = %s WHERE national_id = %s",
-        (bool(blocked), reason, national_id),
+        "UPDATE people SET blocked = %s, block_reason = %s, updated_at = %s WHERE national_id = %s",
+        (bool(blocked), reason, now, national_id),
     )
     return get_person_by_nid(national_id)
 
@@ -402,6 +441,39 @@ def search_people(query: Optional[str] = None, limit: int = 200) -> List[Dict[st
     return [_row_to_dict(row) for row in rows]
 
 
+def get_people_updated_since(
+    cursor_ts: Optional[str],
+    cursor_id: int = 0,
+    limit: int = 200,
+) -> List[Dict[str, Any]]:
+    effective_ts = (cursor_ts or "").strip() or "1970-01-01T00:00:00"
+    if DB_BACKEND == "postgres":
+        rows = _fetchall(
+            """
+            SELECT *
+            FROM people
+            WHERE updated_at IS NOT NULL
+              AND (updated_at, id) > (%s, %s)
+            ORDER BY updated_at ASC, id ASC
+            LIMIT %s
+            """,
+            (effective_ts, int(cursor_id), limit),
+        )
+    else:
+        rows = _fetchall(
+            """
+            SELECT *
+            FROM people
+            WHERE updated_at IS NOT NULL
+              AND (updated_at > %s OR (updated_at = %s AND id > %s))
+            ORDER BY updated_at ASC, id ASC
+            LIMIT %s
+            """,
+            (effective_ts, effective_ts, int(cursor_id), limit),
+        )
+    return [_row_to_dict(row) for row in rows]
+
+
 def update_person(
     national_id: str,
     full_name: Optional[str] = None,
@@ -417,6 +489,8 @@ def update_person(
         params.append(new_national_id.strip())
     if not updates:
         return get_person_by_nid(national_id)
+    updates.append("updated_at = %s")
+    params.append(_utcnow())
     params.append(national_id)
     try:
         _execute(
