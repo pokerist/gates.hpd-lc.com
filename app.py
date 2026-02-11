@@ -197,6 +197,20 @@ def _require_debug_access(request: Request) -> None:
         raise HTTPException(status_code=403, detail="الرمز غير صحيح أو غير مفعل")
 
 
+def _detect_face_embedding(scan) -> Optional[object]:
+    if scan is None or scan.photo_image is None:
+        return None
+    embedding = scan.face_embedding
+    if embedding is None:
+        embedding = face_match.extract_face_embedding(scan.photo_image)
+    if embedding is not None and getattr(scan, "face_embedding", None) is None:
+        try:
+            scan.face_embedding = embedding
+        except Exception:
+            pass
+    return embedding
+
+
 def _process_scan(image_bytes: bytes) -> dict:
     original_card_filename = media.save_original_card_image(image_bytes)
     scan = run_security_scan(image_bytes)
@@ -218,6 +232,13 @@ def _process_scan(image_bytes: bytes) -> dict:
         return {
             "status": "error",
             "message": "لم يتم استخراج صورة واضحة من البطاقة",
+            "ocr": {"full_name": full_name, "national_id": national_id},
+            "timings": scan.timings,
+        }
+    if _detect_face_embedding(scan) is None:
+        return {
+            "status": "error",
+            "message": "لم يتم اكتشاف وجه واضح في صورة البطاقة",
             "ocr": {"full_name": full_name, "national_id": national_id},
             "timings": scan.timings,
         }
@@ -373,6 +394,13 @@ def _process_scan_external(
         return {
             "status": "error",
             "message": "لم يتم استخراج صورة واضحة من البطاقة",
+        }
+    if _detect_face_embedding(scan) is None:
+        _cleanup_raw_file(raw_path)
+        _cleanup_card_file(original_card_filename)
+        return {
+            "status": "error",
+            "message": "لم يتم اكتشاف وجه واضح في صورة البطاقة",
         }
 
     match_info = scan.face_match
