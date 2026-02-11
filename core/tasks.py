@@ -264,3 +264,20 @@ def reprocess_person_job(national_id: str, direction: str) -> None:
 
     if embedding_blob:
         face_match.mark_index_dirty()
+
+
+def reprocess_person_job_by_id(record_id: int, direction: str) -> None:
+    try:
+        rid = int(record_id)
+    except Exception:
+        print(f"[REPROCESS] Invalid record id: {record_id}")
+        return
+    person = db.get_person_by_id(rid)
+    if not person:
+        print(f"[REPROCESS] Person not found by id: {rid}")
+        return
+    national_id = (person.get("national_id") or "").strip()
+    if not national_id:
+        print(f"[REPROCESS] Missing national_id for id: {rid}")
+        return
+    reprocess_person_job(national_id, direction)

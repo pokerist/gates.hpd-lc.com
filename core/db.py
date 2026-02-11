@@ -322,6 +322,15 @@ def get_person_by_nid(national_id: str) -> Optional[Dict[str, Any]]:
     return _row_to_dict(row) if row else None
 
 
+def get_person_by_id(record_id: int) -> Optional[Dict[str, Any]]:
+    try:
+        rid = int(record_id)
+    except Exception:
+        return None
+    row = _fetchone("SELECT * FROM people WHERE id = %s", (rid,))
+    return _row_to_dict(row) if row else None
+
+
 def get_face_embedding(national_id: str) -> Optional[bytes]:
     row = _fetchone("SELECT face_embedding FROM people WHERE national_id = %s", (national_id,))
     return _row_value(row, "face_embedding")

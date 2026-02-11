@@ -39,6 +39,7 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 DEBUG_PIN = os.getenv("DEBUG_PIN", "1150445")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "change-this-session-secret")
 PRODUCTION = os.getenv("PRODUCTION", "0") == "1"
+STATIC_VERSION = os.getenv("STATIC_VERSION", "1")
 
 BASE_DIR = media.BASE_DIR
 STATIC_DIR = BASE_DIR / "static"
@@ -64,6 +65,7 @@ app.mount("/person-photos", StaticFiles(directory=str(PHOTO_DIR)), name="person-
 app.mount("/card-images", StaticFiles(directory=str(CARD_DIR)), name="card-images")
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+templates.env.globals["static_version"] = STATIC_VERSION
 
 
 class BlockRequest(BaseModel):
@@ -99,7 +101,8 @@ class DebugPinRequest(BaseModel):
 
 
 class BatchRotateRequest(BaseModel):
-    national_ids: list[str]
+    record_ids: Optional[list[int]] = None
+    national_ids: Optional[list[str]] = None
     direction: str
 
 
@@ -735,13 +738,35 @@ def reprocess_people(request: Request, payload: BatchRotateRequest, background_t
     _require_admin(request)
     if payload.direction not in {"cw", "ccw"}:
         raise HTTPException(status_code=400, detail="اتجاه التدوير غير صالح")
+    record_ids: list[int] = []
+    if payload.record_ids is not None:
+        for item in payload.record_ids:
+            try:
+                rid = int(item)
+            except Exception:
+                continue
+            if rid > 0:
+                record_ids.append(rid)
+        if not record_ids:
+            raise HTTPException(status_code=400, detail="لا توجد سجلات محددة")
+        if len(record_ids) > REPROCESS_BATCH_MAX:
+            raise HTTPException(status_code=400, detail="عدد السجلات أكبر من الحد المسموح")
+
+    job_ids: list[str] = []
+    if record_ids:
+        for rid in record_ids:
+            job_id = rq_queue.enqueue_reprocess_by_id(rid, payload.direction)
+            if job_id is None:
+                background_tasks.add_task(background_tasks_runner.reprocess_person_job_by_id, rid, payload.direction)
+            else:
+                job_ids.append(job_id)
+        return {"status": "ok", "count": len(record_ids), "jobs": job_ids}
+
     raw_ids = [item.strip() for item in (payload.national_ids or []) if item and item.strip()]
     if not raw_ids:
         raise HTTPException(status_code=400, detail="لا توجد سجلات محددة")
     if len(raw_ids) > REPROCESS_BATCH_MAX:
         raise HTTPException(status_code=400, detail="عدد السجلات أكبر من الحد المسموح")
-
-    job_ids: list[str] = []
     for nid in raw_ids:
         job_id = rq_queue.enqueue_reprocess(nid, payload.direction)
         if job_id is None:

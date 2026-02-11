@@ -56,6 +56,26 @@ def enqueue_reprocess(national_id: str, direction: str) -> Optional[str]:
     url = _redis_url()
     if not url:
         return None
+
+
+def enqueue_reprocess_by_id(record_id: int, direction: str) -> Optional[str]:
+    url = _redis_url()
+    if not url:
+        return None
+    try:
+        conn = Redis.from_url(url)
+        queue = Queue(_queue_name(), connection=conn, default_timeout=_job_timeout())
+        job = queue.enqueue(
+            tasks.reprocess_person_job_by_id,
+            record_id,
+            direction,
+            job_timeout=_job_timeout(),
+        )
+        print(f"[RQ] Enqueued job {job.id}")
+        return job.id
+    except Exception as exc:
+        print(f"[RQ] Failed to enqueue job: {exc}")
+        return None
     try:
         conn = Redis.from_url(url)
         queue = Queue(_queue_name(), connection=conn, default_timeout=_job_timeout())

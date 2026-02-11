@@ -23,6 +23,7 @@ const previewClose = document.getElementById("cardPreviewClose");
 
 const state = {
   people: new Map(),
+  peopleById: new Map(),
   lastItems: [],
   issueIds: new Set(),
   activeEditor: null,
@@ -86,6 +87,13 @@ function displayNid(person) {
   return isValidNid(person.national_id || "") ? person.national_id : "—";
 }
 
+function getRecordId(item) {
+  if (!item) return "";
+  const value = item.id;
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
 function updateLiveStatus() {
   if (!liveStatus) return;
   if (state.activeEditor) {
@@ -114,7 +122,7 @@ function updateSelectedCount() {
 }
 
 function syncSelection(items) {
-  const visibleIds = new Set(items.map(item => (item.national_id || "").trim()).filter(Boolean));
+  const visibleIds = new Set(items.map(getRecordId).filter(Boolean));
   for (const id of Array.from(state.selectedIds)) {
     if (!visibleIds.has(id)) {
       state.selectedIds.delete(id);
@@ -122,12 +130,12 @@ function syncSelection(items) {
   }
   if (selectAllRows) {
     const allSelected = items.length > 0 && items.every(item => {
-      const nid = (item.national_id || "").trim();
-      return nid && state.selectedIds.has(nid);
+      const rid = getRecordId(item);
+      return rid && state.selectedIds.has(rid);
     });
     const anySelected = items.some(item => {
-      const nid = (item.national_id || "").trim();
-      return nid && state.selectedIds.has(nid);
+      const rid = getRecordId(item);
+      return rid && state.selectedIds.has(rid);
     });
     selectAllRows.checked = allSelected;
     selectAllRows.indeterminate = anySelected && !allSelected;
@@ -138,8 +146,8 @@ function syncSelection(items) {
 function applySelectionToDom() {
   const checkboxes = document.querySelectorAll('input[data-action="select-row"]');
   checkboxes.forEach(cb => {
-    const nid = (cb.getAttribute("data-nid") || "").trim();
-    cb.checked = nid && state.selectedIds.has(nid);
+    const rid = (cb.getAttribute("data-id") || "").trim();
+    cb.checked = rid && state.selectedIds.has(rid);
   });
   updateSelectedCount();
 }
@@ -206,6 +214,13 @@ async function fetchPeople({ silent = false } = {}) {
     updatePagination(data.total || 0);
     state.lastItems = items;
     state.people = new Map(items.map(item => [(item.national_id || "").trim(), item]));
+    state.peopleById = new Map();
+    items.forEach(item => {
+      const rid = getRecordId(item);
+      if (rid) {
+        state.peopleById.set(rid, item);
+      }
+    });
     if (state.activeEditor && !state.people.has(state.activeEditor)) {
       state.activeEditor = null;
     }
@@ -279,8 +294,10 @@ function renderTable(items) {
   items.forEach(person => {
     const row = document.createElement("tr");
     const nidValue = (person.national_id || "").trim();
+    const rowId = getRecordId(person);
     row.setAttribute("data-nid", nidValue);
-    const isSelected = nidValue && state.selectedIds.has(nidValue);
+    row.setAttribute("data-id", rowId);
+    const isSelected = rowId && state.selectedIds.has(rowId);
     const statusBadge = person.blocked
       ? '<span class="badge blocked">محظور</span>'
       : '<span class="badge allowed">مسموح</span>';
@@ -312,7 +329,7 @@ function renderTable(items) {
 
     row.innerHTML = `
       <td>
-        <input type="checkbox" data-action="select-row" data-nid="${escapeAttr(nidValue)}" ${isSelected ? "checked" : ""} />
+        <input type="checkbox" data-action="select-row" data-id="${escapeAttr(rowId)}" ${isSelected ? "checked" : ""} />
       </td>
       <td>${photoCell}</td>
       <td>${cardCell}</td>
@@ -497,15 +514,24 @@ function showToast(title, body) {
 
 async function sendReprocess(direction) {
   const ids = Array.from(state.selectedIds);
-  if (!ids.length) {
+  const recordIds = ids
+    .map(id => parseInt(id, 10))
+    .filter(value => Number.isFinite(value));
+  if (!recordIds.length) {
     showToast("لا توجد سجلات", "اختر سجلات أولاً لتنفيذ التدوير.");
     return;
   }
+  const nationalIds = ids
+    .map(id => {
+      const person = state.peopleById.get(id);
+      return (person?.national_id || "").trim();
+    })
+    .filter(Boolean);
   try {
     const res = await fetch("/api/admin/reprocess", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ national_ids: ids, direction })
+      body: JSON.stringify({ record_ids: recordIds, national_ids: nationalIds, direction })
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
@@ -697,12 +723,12 @@ tableBody.addEventListener("change", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) return;
   if (target.getAttribute("data-action") !== "select-row") return;
-  const nid = (target.getAttribute("data-nid") || "").trim();
-  if (!nid) return;
+  const rid = (target.getAttribute("data-id") || "").trim();
+  if (!rid) return;
   if (target.checked) {
-    state.selectedIds.add(nid);
+    state.selectedIds.add(rid);
   } else {
-    state.selectedIds.delete(nid);
+    state.selectedIds.delete(rid);
   }
   syncSelection(state.lastItems);
 });
@@ -776,10 +802,10 @@ selectAllRows?.addEventListener("change", () => {
   const checkboxes = document.querySelectorAll('input[data-action="select-row"]');
   state.selectedIds.clear();
   checkboxes.forEach(cb => {
-    const nid = (cb.getAttribute("data-nid") || "").trim();
+    const rid = (cb.getAttribute("data-id") || "").trim();
     cb.checked = selectAllRows.checked;
-    if (selectAllRows.checked && nid) {
-      state.selectedIds.add(nid);
+    if (selectAllRows.checked && rid) {
+      state.selectedIds.add(rid);
     }
   });
   updateSelectedCount();
