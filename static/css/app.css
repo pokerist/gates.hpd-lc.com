@@ -539,45 +539,64 @@ canvas {
 
 .issue-item {
   display: grid;
-  grid-template-columns: 64px 1fr auto;
+  grid-template-columns: 160px 1fr auto;
   align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
-  border-radius: 16px;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 18px;
   border: 1px solid var(--border);
   background: rgba(2, 6, 23, 0.55);
 }
 
-.issue-thumb {
-  width: 64px;
-  height: 72px;
-  border-radius: 12px;
+.issue-media {
+  display: grid;
+  gap: 10px;
+}
+
+.issue-card-thumb,
+.issue-face-thumb {
+  border-radius: 14px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(2, 6, 23, 0.6);
+  background: rgba(2, 6, 23, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.75rem;
   color: var(--muted);
+  font-size: 0.8rem;
 }
 
-.issue-thumb img {
+.issue-card-thumb {
+  aspect-ratio: 3 / 2;
+}
+
+.issue-face-thumb {
+  aspect-ratio: 3 / 4;
+}
+
+.issue-card-thumb img,
+.issue-face-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.issue-main {
+.issue-thumb-placeholder {
+  padding: 8px;
+  text-align: center;
+}
+
+.issue-body {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .issue-title {
   font-weight: 700;
+  font-size: 1.05rem;
 }
 
-.issue-meta {
+.issue-sub {
   color: var(--muted);
   font-size: 0.9rem;
   display: flex;
@@ -585,10 +604,44 @@ canvas {
   flex-wrap: wrap;
 }
 
-.issue-badges {
+.issue-tags {
   display: inline-flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+.issue-tag {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--muted);
+}
+
+.issue-tag.warning {
+  background: rgba(234, 179, 8, 0.16);
+  border-color: rgba(234, 179, 8, 0.4);
+  color: #fde68a;
+}
+
+.issue-tag.danger {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fecaca;
+}
+
+.issue-tag.neutral {
+  background: rgba(59, 130, 246, 0.12);
+  border-color: rgba(59, 130, 246, 0.35);
+  color: #bfdbfe;
+}
+
+.issue-actions {
+  display: grid;
+  gap: 8px;
+  align-content: center;
+  justify-items: stretch;
 }
 
 .live-status {
@@ -835,6 +888,14 @@ canvas {
 
 @media (max-width: 900px) {
   .inline-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .issue-item {
+    grid-template-columns: 1fr;
+  }
+
+  .issue-actions {
     grid-template-columns: 1fr;
   }
 }

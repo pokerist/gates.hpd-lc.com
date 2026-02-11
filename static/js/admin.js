@@ -432,7 +432,10 @@ function buildIssueItems(items) {
     nid: isValidNid(person.national_id || "") ? person.national_id : "غير معروف",
     gate: person.gate_number ?? "—",
     photo: person.photo_path || "",
-    card: person.card_path || ""
+    card: person.card_path || "",
+    missingName: !((person.full_name || "").trim()),
+    missingNid: !isValidNid(person.national_id || ""),
+    updatedAt: person.updated_at || person.created_at || ""
   })).filter(issue => issue.id);
 }
 
@@ -449,9 +452,9 @@ function renderIssues(items, total) {
   if (!issues.length) {
     manualIssuesList.innerHTML = `
       <div class="issue-item">
-        <div class="issue-thumb">—</div>
-        <div class="issue-main">
+        <div class="issue-body">
           <div class="issue-title">لا توجد سجلات تحتاج إدخال يدوي حالياً.</div>
+          <div class="issue-sub">كل البيانات مكتملة في الوقت الحالي.</div>
         </div>
       </div>
     `;
@@ -459,24 +462,40 @@ function renderIssues(items, total) {
     issues.forEach(issue => {
       const item = document.createElement("div");
       item.className = "issue-item";
-      const thumb = issue.photo
-        ? `<img src="/person-photos/${escapeAttr(issue.photo)}" alt="photo" />`
-        : issue.card
-          ? `<img src="/card-images/${escapeAttr(issue.card)}" alt="card" />`
-          : "—";
+      const cardUrl = issue.card ? `/card-images/${escapeAttr(issue.card)}` : "";
+      const faceUrl = issue.photo ? `/person-photos/${escapeAttr(issue.photo)}` : "";
+      const cardThumb = cardUrl
+        ? `<img src="${cardUrl}" alt="card" />`
+        : `<div class="issue-thumb-placeholder">لا توجد بطاقة</div>`;
+      const faceThumb = faceUrl
+        ? `<img src="${faceUrl}" alt="face" />`
+        : `<div class="issue-thumb-placeholder">لا توجد صورة</div>`;
+      const tags = [];
+      if (issue.missingName) tags.push({ label: "الاسم ناقص", tone: "warning" });
+      if (issue.missingNid) tags.push({ label: "رقم قومي غير صحيح", tone: "danger" });
+      const tagsHtml = tags
+        .map(tag => `<span class="issue-tag ${tag.tone}">${escapeHtml(tag.label)}</span>`)
+        .join("");
+      const updatedLabel = issue.updatedAt ? formatDate(issue.updatedAt) : "—";
       item.innerHTML = `
-        <div class="issue-thumb">${thumb}</div>
-        <div class="issue-main">
+        <div class="issue-media">
+          <div class="issue-card-thumb">${cardThumb}</div>
+          <div class="issue-face-thumb">${faceThumb}</div>
+        </div>
+        <div class="issue-body">
           <div class="issue-title">${escapeHtml(issue.name)}</div>
-          <div class="issue-meta">
-            <span>الرقم القومي: ${escapeHtml(issue.nid)}</span>
-            <span>البوابة: ${escapeHtml(issue.gate)}</span>
+          <div class="issue-sub">
+            الرقم القومي: ${escapeHtml(issue.nid)} • البوابة: ${escapeHtml(issue.gate)}
           </div>
-          <div class="issue-badges">
-            <span class="badge warning">يحتاج إدخال يدوي</span>
+          <div class="issue-sub">آخر تحديث: ${escapeHtml(updatedLabel)}</div>
+          <div class="issue-tags">
+            ${tagsHtml || `<span class="issue-tag neutral">يحتاج إدخال يدوي</span>`}
           </div>
         </div>
-        <button class="btn btn-outline btn-sm" data-action="manual" data-nid="${escapeAttr(issue.id || "")}">فتح الإدخال</button>
+        <div class="issue-actions">
+          <button class="btn btn-warning btn-sm" data-action="manual" data-nid="${escapeAttr(issue.id || "")}">فتح الإدخال</button>
+          ${cardUrl ? `<button class="btn btn-outline btn-sm" data-action="view-card" data-card="${cardUrl}" data-face="${faceUrl}">عرض البطاقة</button>` : ""}
+        </div>
       `;
       manualIssuesList.appendChild(item);
     });
@@ -840,6 +859,15 @@ tableBody.addEventListener("click", async (event) => {
 manualIssuesList?.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button) return;
+  const action = button.getAttribute("data-action") || "manual";
+  if (action === "view-card") {
+    const url = button.getAttribute("data-card");
+    const faceUrl = button.getAttribute("data-face") || "";
+    if (url) {
+      openCardPreview(url, faceUrl);
+    }
+    return;
+  }
   const nid = button.getAttribute("data-nid");
   if (!nid) return;
   openEditorEnsureVisible(nid);
