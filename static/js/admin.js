@@ -10,6 +10,10 @@ const selectAllRows = document.getElementById("selectAllRows");
 const rotateCcwBtn = document.getElementById("rotateCcwBtn");
 const rotateCwBtn = document.getElementById("rotateCwBtn");
 const selectedCountEl = document.getElementById("selectedCount");
+const pagePrevBtn = document.getElementById("pagePrevBtn");
+const pageNextBtn = document.getElementById("pageNextBtn");
+const pageInfo = document.getElementById("pageInfo");
+const pageSizeSelect = document.getElementById("pageSizeSelect");
 
 const previewPanel = document.getElementById("cardPreviewPanel");
 const previewBackdrop = document.getElementById("cardPreviewBackdrop");
@@ -29,8 +33,18 @@ const state = {
   cursorId: null,
   sse: null,
   sseConnected: false,
-  hasInitialLoad: false
+  hasInitialLoad: false,
+  page: 1,
+  pageSize: 50,
+  total: 0
 };
+
+if (pageSizeSelect) {
+  const parsed = parseInt(pageSizeSelect.value, 10);
+  if (!Number.isNaN(parsed)) {
+    state.pageSize = parsed;
+  }
+}
 
 function escapeHtml(value) {
   return String(value || "")
@@ -100,7 +114,7 @@ function updateSelectedCount() {
 }
 
 function syncSelection(items) {
-  const visibleIds = new Set(items.map(item => item.national_id));
+  const visibleIds = new Set(items.map(item => (item.national_id || "").trim()).filter(Boolean));
   for (const id of Array.from(state.selectedIds)) {
     if (!visibleIds.has(id)) {
       state.selectedIds.delete(id);
@@ -131,6 +145,24 @@ function updateCursor(items) {
   state.cursorId = bestId;
 }
 
+function updatePagination(total) {
+  state.total = typeof total === "number" ? total : 0;
+  const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+  if (state.page > totalPages) {
+    state.page = totalPages;
+    state.pendingRefresh = true;
+  }
+  if (pageInfo) {
+    pageInfo.textContent = `صفحة ${state.page} من ${totalPages} • ${state.total} سجل`;
+  }
+  if (pagePrevBtn) {
+    pagePrevBtn.disabled = state.page <= 1;
+  }
+  if (pageNextBtn) {
+    pageNextBtn.disabled = state.page >= totalPages;
+  }
+}
+
 async function fetchPeople({ silent = false } = {}) {
   if (state.fetching) {
     state.pendingRefresh = true;
@@ -142,13 +174,18 @@ async function fetchPeople({ silent = false } = {}) {
     updateLiveStatus();
   }
   const query = searchInput.value.trim();
-  const url = query ? `/api/admin/people?q=${encodeURIComponent(query)}` : "/api/admin/people";
+  const params = new URLSearchParams();
+  if (query) params.set("q", query);
+  params.set("page", String(state.page));
+  params.set("page_size", String(state.pageSize));
+  const url = `/api/admin/people?${params.toString()}`;
   try {
     const res = await fetch(url);
     const data = await res.json();
     const items = data.items || [];
+    updatePagination(data.total || 0);
     state.lastItems = items;
-    state.people = new Map(items.map(item => [item.national_id, item]));
+    state.people = new Map(items.map(item => [(item.national_id || "").trim(), item]));
     if (state.activeEditor && !state.people.has(state.activeEditor)) {
       state.activeEditor = null;
     }
@@ -221,8 +258,9 @@ function renderTable(items) {
 
   items.forEach(person => {
     const row = document.createElement("tr");
-    row.setAttribute("data-nid", person.national_id || "");
-    const isSelected = state.selectedIds.has(person.national_id);
+    const nidValue = (person.national_id || "").trim();
+    row.setAttribute("data-nid", nidValue);
+    const isSelected = nidValue && state.selectedIds.has(nidValue);
     const statusBadge = person.blocked
       ? '<span class="badge blocked">محظور</span>'
       : '<span class="badge allowed">مسموح</span>';
@@ -249,12 +287,12 @@ function renderTable(items) {
       : `<div style="width:80px;height:52px;border-radius:10px;border:1px dashed rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:0.7rem;color:rgba(255,255,255,0.5);">—</div>`;
 
     const manualButton = needsManualEntry
-      ? `<button class="btn btn-warning btn-sm" data-action="manual" data-nid="${escapeAttr(person.national_id || "")}">إدخال يدوي</button>`
+      ? `<button class="btn btn-warning btn-sm" data-action="manual" data-nid="${escapeAttr(nidValue)}">إدخال يدوي</button>`
       : "";
 
     row.innerHTML = `
       <td>
-        <input type="checkbox" data-action="select-row" data-nid="${escapeAttr(person.national_id || "")}" ${isSelected ? "checked" : ""} />
+        <input type="checkbox" data-action="select-row" data-nid="${escapeAttr(nidValue)}" ${isSelected ? "checked" : ""} />
       </td>
       <td>${photoCell}</td>
       <td>${cardCell}</td>
@@ -271,13 +309,13 @@ function renderTable(items) {
       <td>
         <div class="action-group">
           ${manualButton}
-          <button class="icon-btn" data-action="edit" data-nid="${escapeAttr(person.national_id || "")}" title="تعديل">
+          <button class="icon-btn" data-action="edit" data-nid="${escapeAttr(nidValue)}" title="تعديل">
             ${icons.edit}
           </button>
-          <button class="icon-btn ${person.blocked ? "success" : ""}" data-action="toggle" data-nid="${escapeAttr(person.national_id || "")}" data-blocked="${person.blocked ? "1" : "0"}" title="${person.blocked ? "إلغاء الحظر" : "حظر"}">
+          <button class="icon-btn ${person.blocked ? "success" : ""}" data-action="toggle" data-nid="${escapeAttr(nidValue)}" data-blocked="${person.blocked ? "1" : "0"}" title="${person.blocked ? "إلغاء الحظر" : "حظر"}">
             ${person.blocked ? icons.allow : icons.block}
           </button>
-          <button class="icon-btn danger" data-action="delete" data-nid="${escapeAttr(person.national_id || "")}" title="حذف">
+          <button class="icon-btn danger" data-action="delete" data-nid="${escapeAttr(nidValue)}" title="حذف">
             ${icons.trash}
           </button>
         </div>
@@ -285,12 +323,12 @@ function renderTable(items) {
     `;
     tableBody.appendChild(row);
 
-    if (state.activeEditor && person.national_id === state.activeEditor) {
+    if (state.activeEditor && nidValue === state.activeEditor) {
       const editorRow = document.createElement("tr");
       editorRow.className = "inline-editor-row";
-      editorRow.setAttribute("data-editor-for", person.national_id || "");
-      const hasValidNid = isValidNid(person.national_id || "");
-      const editorNidValue = hasValidNid ? person.national_id : "";
+      editorRow.setAttribute("data-editor-for", nidValue);
+      const hasValidNid = isValidNid(nidValue);
+      const editorNidValue = hasValidNid ? nidValue : "";
       const editorNameValue = person.full_name || "";
       const nidHint = hasValidNid
         ? "اتركه فارغ لو بدون تغيير."
@@ -310,8 +348,8 @@ function renderTable(items) {
               </div>
             </div>
             <div class="inline-actions">
-              <button class="btn btn-primary btn-sm" data-action="save-edit" data-nid="${escapeAttr(person.national_id || "")}">حفظ</button>
-              <button class="btn btn-outline btn-sm" data-action="cancel-edit" data-nid="${escapeAttr(person.national_id || "")}">إلغاء</button>
+              <button class="btn btn-primary btn-sm" data-action="save-edit" data-nid="${escapeAttr(nidValue)}">حفظ</button>
+              <button class="btn btn-outline btn-sm" data-action="cancel-edit" data-nid="${escapeAttr(nidValue)}">إلغاء</button>
               <span class="inline-status" data-role="status"></span>
             </div>
           </div>
@@ -324,7 +362,7 @@ function renderTable(items) {
 
 function buildIssueItems(items) {
   return items.filter(needsManual).map(person => ({
-    id: person.national_id,
+    id: (person.national_id || "").trim(),
     name: person.full_name || "بدون اسم",
     nid: isValidNid(person.national_id || "") ? person.national_id : "غير معروف"
   }));
@@ -332,7 +370,7 @@ function buildIssueItems(items) {
 
 function renderIssues(items) {
   if (!manualIssuesList) return;
-  const issues = buildIssueItems(items);
+  const issues = buildIssueItems(items).filter(issue => issue.id);
   manualIssuesList.innerHTML = "";
   if (manualIssuesCount) {
     manualIssuesCount.textContent = String(issues.length);
@@ -441,15 +479,16 @@ async function sendReprocess(direction) {
 }
 
 function openEditor(nid) {
-  if (!nid) return;
-  if (!state.people.has(nid)) {
-    fetchPeople().then(() => openEditor(nid));
+  const safeId = (nid || "").trim();
+  if (!safeId) return;
+  if (!state.people.has(safeId)) {
+    fetchPeople().then(() => openEditor(safeId));
     return;
   }
-  state.activeEditor = nid;
+  state.activeEditor = safeId;
   renderTable(state.lastItems);
   updateLiveStatus();
-  scrollToRow(nid);
+  scrollToRow(safeId);
 }
 
 function openEditorEnsureVisible(nid) {
@@ -505,14 +544,15 @@ async function deletePerson(nationalId) {
 }
 
 async function saveInlineEdit(nid) {
-  const row = document.querySelector(`tr[data-editor-for="${cssEscape(nid)}"]`);
+  const safeId = (nid || "").trim();
+  const row = document.querySelector(`tr[data-editor-for="${cssEscape(safeId)}"]`);
   if (!row) return;
   const fullNameInput = row.querySelector("input[data-field='full_name']");
   const nidInput = row.querySelector("input[data-field='national_id']");
   const statusEl = row.querySelector("[data-role='status']");
   if (!fullNameInput || !nidInput || !statusEl) return;
 
-  const current = state.people.get(nid);
+  const current = state.people.get(safeId);
   const fullName = fullNameInput.value.trim();
   const newNid = nidInput.value.trim();
   const requiresNid = !isValidNid(current?.national_id || "");
@@ -539,7 +579,7 @@ async function saveInlineEdit(nid) {
   statusEl.textContent = "جارٍ الحفظ...";
 
   const payload = {
-    national_id: nid,
+    national_id: safeId,
     full_name: fullName
   };
   if (newNid) {
@@ -614,7 +654,7 @@ tableBody.addEventListener("change", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) return;
   if (target.getAttribute("data-action") !== "select-row") return;
-  const nid = target.getAttribute("data-nid") || "";
+  const nid = (target.getAttribute("data-nid") || "").trim();
   if (!nid) return;
   if (target.checked) {
     state.selectedIds.add(nid);
@@ -680,7 +720,10 @@ manualIssuesList?.addEventListener("click", (event) => {
 
 searchInput.addEventListener("input", () => {
   clearTimeout(searchInput._timer);
-  searchInput._timer = setTimeout(() => fetchPeople({ silent: true }), 400);
+  searchInput._timer = setTimeout(() => {
+    state.page = 1;
+    fetchPeople({ silent: true });
+  }, 400);
 });
 
 refreshBtn.addEventListener("click", () => fetchPeople());
@@ -688,7 +731,10 @@ refreshBtn.addEventListener("click", () => fetchPeople());
 selectAllRows?.addEventListener("change", () => {
   if (!selectAllRows) return;
   if (selectAllRows.checked) {
-    state.lastItems.forEach(item => state.selectedIds.add(item.national_id));
+    state.lastItems.forEach(item => {
+      const nid = (item.national_id || "").trim();
+      if (nid) state.selectedIds.add(nid);
+    });
   } else {
     state.selectedIds.clear();
   }
@@ -697,6 +743,30 @@ selectAllRows?.addEventListener("change", () => {
 
 rotateCcwBtn?.addEventListener("click", () => sendReprocess("ccw"));
 rotateCwBtn?.addEventListener("click", () => sendReprocess("cw"));
+
+pagePrevBtn?.addEventListener("click", () => {
+  if (state.page > 1) {
+    state.page -= 1;
+    fetchPeople({ silent: true });
+  }
+});
+
+pageNextBtn?.addEventListener("click", () => {
+  const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+  if (state.page < totalPages) {
+    state.page += 1;
+    fetchPeople({ silent: true });
+  }
+});
+
+pageSizeSelect?.addEventListener("change", () => {
+  const nextSize = parseInt(pageSizeSelect.value, 10);
+  if (!Number.isNaN(nextSize)) {
+    state.pageSize = nextSize;
+    state.page = 1;
+    fetchPeople({ silent: true });
+  }
+});
 
 debugAccessBtn?.addEventListener("click", async () => {
   const pin = prompt("أدخل رمز الدخول للـ Debug");

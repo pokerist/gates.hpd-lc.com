@@ -454,7 +454,7 @@ def delete_person(national_id: str) -> bool:
     return _execute("DELETE FROM people WHERE national_id = %s", (national_id,)) > 0
 
 
-def search_people(query: Optional[str] = None, limit: int = 200) -> List[Dict[str, Any]]:
+def search_people(query: Optional[str] = None, limit: int = 200, offset: int = 0) -> List[Dict[str, Any]]:
     if query:
         q = f"%{query.strip()}%"
         rows = _fetchall(
@@ -462,20 +462,36 @@ def search_people(query: Optional[str] = None, limit: int = 200) -> List[Dict[st
             SELECT * FROM people
             WHERE national_id LIKE %s OR full_name LIKE %s
             ORDER BY last_seen_at DESC, created_at DESC
-            LIMIT %s
+            LIMIT %s OFFSET %s
             """,
-            (q, q, limit),
+            (q, q, limit, offset),
         )
     else:
         rows = _fetchall(
             """
             SELECT * FROM people
             ORDER BY last_seen_at DESC, created_at DESC
-            LIMIT %s
+            LIMIT %s OFFSET %s
             """,
-            (limit,),
+            (limit, offset),
         )
     return [_row_to_dict(row) for row in rows]
+
+
+def count_people(query: Optional[str] = None) -> int:
+    if query:
+        q = f"%{query.strip()}%"
+        row = _fetchone(
+            """
+            SELECT COUNT(*) AS total
+            FROM people
+            WHERE national_id LIKE %s OR full_name LIKE %s
+            """,
+            (q, q),
+        )
+    else:
+        row = _fetchone("SELECT COUNT(*) AS total FROM people")
+    return int(_row_value(row, "total", 0) or 0)
 
 
 def get_people_updated_since(

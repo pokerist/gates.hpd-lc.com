@@ -610,10 +610,31 @@ def update_settings(request: Request, payload: SettingsRequest):
 
 
 @app.get("/api/admin/people")
-def list_people(request: Request, q: Optional[str] = None):
+def list_people(
+    request: Request,
+    q: Optional[str] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+):
     _require_admin(request)
-    people = db.search_people(q)
-    return {"items": people}
+    try:
+        page_value = int(page or 1)
+    except Exception:
+        page_value = 1
+    try:
+        size_value = int(page_size or 50)
+    except Exception:
+        size_value = 50
+    if page_value < 1:
+        page_value = 1
+    if size_value < 10:
+        size_value = 10
+    if size_value > 200:
+        size_value = 200
+    offset = (page_value - 1) * size_value
+    people = db.search_people(q, limit=size_value, offset=offset)
+    total = db.count_people(q)
+    return {"items": people, "total": total, "page": page_value, "page_size": size_value}
 
 
 @app.get("/api/admin/stream")
