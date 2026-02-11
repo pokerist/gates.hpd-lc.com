@@ -35,7 +35,7 @@ const state = {
   sseConnected: false,
   hasInitialLoad: false,
   page: 1,
-  pageSize: 50,
+  pageSize: 25,
   total: 0
 };
 
@@ -773,16 +773,17 @@ refreshBtn.addEventListener("click", () => fetchPeople());
 
 selectAllRows?.addEventListener("change", () => {
   if (!selectAllRows) return;
-  if (selectAllRows.checked) {
-    state.lastItems.forEach(item => {
-      const nid = (item.national_id || "").trim();
-      if (nid) state.selectedIds.add(nid);
-    });
-  } else {
-    state.selectedIds.clear();
-  }
-  applySelectionToDom();
-  syncSelection(state.lastItems);
+  const checkboxes = document.querySelectorAll('input[data-action="select-row"]');
+  state.selectedIds.clear();
+  checkboxes.forEach(cb => {
+    const nid = (cb.getAttribute("data-nid") || "").trim();
+    cb.checked = selectAllRows.checked;
+    if (selectAllRows.checked && nid) {
+      state.selectedIds.add(nid);
+    }
+  });
+  updateSelectedCount();
+  selectAllRows.indeterminate = false;
 });
 
 rotateCcwBtn?.addEventListener("click", () => sendReprocess("ccw"));

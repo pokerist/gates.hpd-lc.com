@@ -622,7 +622,7 @@ def list_people(
     except Exception:
         page_value = 1
     try:
-        size_value = int(page_size or 50)
+        size_value = int(page_size or 25)
     except Exception:
         size_value = 50
     if page_value < 1:
