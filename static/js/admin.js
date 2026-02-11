@@ -6,6 +6,10 @@ const manualIssuesList = document.getElementById("manualIssuesList");
 const manualIssuesCount = document.getElementById("manualIssuesCount");
 const liveStatus = document.getElementById("liveStatus");
 const toastContainer = document.getElementById("toastContainer");
+const selectAllRows = document.getElementById("selectAllRows");
+const rotateCcwBtn = document.getElementById("rotateCcwBtn");
+const rotateCwBtn = document.getElementById("rotateCwBtn");
+const selectedCountEl = document.getElementById("selectedCount");
 
 const previewPanel = document.getElementById("cardPreviewPanel");
 const previewBackdrop = document.getElementById("cardPreviewBackdrop");
@@ -18,6 +22,7 @@ const state = {
   lastItems: [],
   issueIds: new Set(),
   activeEditor: null,
+  selectedIds: new Set(),
   pendingRefresh: false,
   fetching: false,
   cursorTs: null,
@@ -88,6 +93,26 @@ function updateLiveStatus() {
   liveStatus.className = "live-status connected";
 }
 
+function updateSelectedCount() {
+  if (selectedCountEl) {
+    selectedCountEl.textContent = String(state.selectedIds.size);
+  }
+}
+
+function syncSelection(items) {
+  const visibleIds = new Set(items.map(item => item.national_id));
+  for (const id of Array.from(state.selectedIds)) {
+    if (!visibleIds.has(id)) {
+      state.selectedIds.delete(id);
+    }
+  }
+  if (selectAllRows) {
+    selectAllRows.checked = items.length > 0 && items.every(item => state.selectedIds.has(item.national_id));
+    selectAllRows.indeterminate = items.some(item => state.selectedIds.has(item.national_id)) && !selectAllRows.checked;
+  }
+  updateSelectedCount();
+}
+
 function updateCursor(items) {
   let bestTs = state.cursorTs;
   let bestId = state.cursorId || 0;
@@ -152,10 +177,13 @@ function renderTable(items) {
   tableBody.innerHTML = "";
   if (!items.length) {
     const row = document.createElement("tr");
-    row.innerHTML = `<td colspan="9">لا توجد نتائج</td>`;
+    row.innerHTML = `<td colspan="11">لا توجد نتائج</td>`;
     tableBody.appendChild(row);
+    syncSelection([]);
     return;
   }
+
+  syncSelection(items);
 
   const icons = {
     eye: `
@@ -194,12 +222,15 @@ function renderTable(items) {
   items.forEach(person => {
     const row = document.createElement("tr");
     row.setAttribute("data-nid", person.national_id || "");
+    const isSelected = state.selectedIds.has(person.national_id);
     const statusBadge = person.blocked
       ? '<span class="badge blocked">محظور</span>'
       : '<span class="badge allowed">مسموح</span>';
     const needsManualEntry = needsManual(person);
     const displayName = escapeHtml(person.full_name || "—");
     const displayNidValue = displayNid(person);
+    const displayGate = person.gate_number ?? "—";
+    const displayGateValue = escapeHtml(displayGate);
     const manualBadge = needsManualEntry ? '<span class="badge warning">يحتاج إدخال يدوي</span>' : "";
 
     const photoCell = person.photo_path
@@ -222,6 +253,9 @@ function renderTable(items) {
       : "";
 
     row.innerHTML = `
+      <td>
+        <input type="checkbox" data-action="select-row" data-nid="${escapeAttr(person.national_id || "")}" ${isSelected ? "checked" : ""} />
+      </td>
       <td>${photoCell}</td>
       <td>${cardCell}</td>
       <td>
@@ -229,6 +263,7 @@ function renderTable(items) {
         ${manualBadge}
       </td>
       <td>${displayNidValue}</td>
+      <td>${displayGateValue}</td>
       <td>${statusBadge}</td>
       <td>${escapeHtml(person.block_reason || "—")}</td>
       <td>${person.visits ?? 0}</td>
@@ -261,7 +296,7 @@ function renderTable(items) {
         ? "اتركه فارغ لو بدون تغيير."
         : "الرقم القومي مطلوب (14 رقم).";
       editorRow.innerHTML = `
-        <td colspan="9">
+        <td colspan="11">
           <div class="inline-editor">
             <div class="inline-fields">
               <div>
@@ -359,6 +394,50 @@ function showIssueToast(issue) {
   setTimeout(() => {
     toast.remove();
   }, 10000);
+}
+
+function showToast(title, body) {
+  if (!toastContainer) return;
+  const toast = document.createElement("div");
+  toast.className = "toast";
+  toast.innerHTML = `
+    <div class="toast-header">
+      <div class="toast-title">${escapeHtml(title)}</div>
+      <button class="toast-close" data-action="close-toast">×</button>
+    </div>
+    <div class="toast-body">${escapeHtml(body)}</div>
+  `;
+  toastContainer.appendChild(toast);
+  toast.querySelector("[data-action='close-toast']")?.addEventListener("click", () => toast.remove());
+  setTimeout(() => {
+    toast.remove();
+  }, 8000);
+}
+
+async function sendReprocess(direction) {
+  const ids = Array.from(state.selectedIds);
+  if (!ids.length) {
+    showToast("لا توجد سجلات", "اختر سجلات أولاً لتنفيذ التدوير.");
+    return;
+  }
+  try {
+    const res = await fetch("/api/admin/reprocess", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ national_ids: ids, direction })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      showToast("تعذر تنفيذ العملية", data.detail || "حدث خطأ أثناء إرسال الطلب.");
+      return;
+    }
+    state.selectedIds.clear();
+    showToast("تم إرسال الطلب", `تم جدولة ${ids.length} سجل لإعادة المعالجة.`);
+    fetchPeople({ silent: true });
+  } catch (err) {
+    console.error(err);
+    showToast("تعذر تنفيذ العملية", "حدث خطأ أثناء الاتصال بالخادم.");
+  }
 }
 
 function openEditor(nid) {
@@ -531,6 +610,20 @@ function startSse() {
   });
 }
 
+tableBody.addEventListener("change", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (target.getAttribute("data-action") !== "select-row") return;
+  const nid = target.getAttribute("data-nid") || "";
+  if (!nid) return;
+  if (target.checked) {
+    state.selectedIds.add(nid);
+  } else {
+    state.selectedIds.delete(nid);
+  }
+  syncSelection(state.lastItems);
+});
+
 tableBody.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
@@ -591,6 +684,19 @@ searchInput.addEventListener("input", () => {
 });
 
 refreshBtn.addEventListener("click", () => fetchPeople());
+
+selectAllRows?.addEventListener("change", () => {
+  if (!selectAllRows) return;
+  if (selectAllRows.checked) {
+    state.lastItems.forEach(item => state.selectedIds.add(item.national_id));
+  } else {
+    state.selectedIds.clear();
+  }
+  renderTable(state.lastItems);
+});
+
+rotateCcwBtn?.addEventListener("click", () => sendReprocess("ccw"));
+rotateCwBtn?.addEventListener("click", () => sendReprocess("cw"));
 
 debugAccessBtn?.addEventListener("click", async () => {
   const pin = prompt("أدخل رمز الدخول للـ Debug");

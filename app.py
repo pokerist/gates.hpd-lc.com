@@ -30,6 +30,7 @@ RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "1") == "1"
 RATE_LIMIT_WINDOW_SEC = int(os.getenv("RATE_LIMIT_WINDOW_SEC", "60"))
 RATE_LIMIT_MAX = int(os.getenv("RATE_LIMIT_MAX", "20"))
 SSE_POLL_INTERVAL_SEC = float(os.getenv("SSE_POLL_INTERVAL_SEC", "2"))
+REPROCESS_BATCH_MAX = int(os.getenv("REPROCESS_BATCH_MAX", "50"))
 TRUST_PROXY = os.getenv("TRUST_PROXY", "1") == "1"
 _rate_lock = Lock()
 _rate_buckets: dict[str, deque[float]] = {}
@@ -90,10 +91,16 @@ class UpdatePersonRequest(BaseModel):
 
 class Base64ScanRequest(BaseModel):
     image_base64: str
+    gate_number: Optional[int] = None
 
 
 class DebugPinRequest(BaseModel):
     pin: str
+
+
+class BatchRotateRequest(BaseModel):
+    national_ids: list[str]
+    direction: str
 
 
 @app.on_event("startup")
@@ -341,7 +348,11 @@ def _process_scan(image_bytes: bytes) -> dict:
     }
 
 
-def _process_scan_external(image_bytes: bytes, background_tasks: Optional[BackgroundTasks]) -> dict:
+def _process_scan_external(
+    image_bytes: bytes,
+    background_tasks: Optional[BackgroundTasks],
+    gate_number: Optional[int] = None,
+) -> dict:
     raw_path = media.save_raw_upload(image_bytes)
     original_card_filename = media.save_original_card_image(image_bytes)
     scan = run_face_match_scan(image_bytes)
@@ -388,6 +399,8 @@ def _process_scan_external(image_bytes: bytes, background_tasks: Optional[Backgr
             )
             if embedding_blob:
                 face_match.mark_index_dirty()
+        if gate_number is not None:
+            db.update_gate_number_if_missing(nid, gate_number)
         person = db.get_person_by_nid(nid) or person
 
         if person.get("blocked"):
@@ -418,11 +431,12 @@ def _process_scan_external(image_bytes: bytes, background_tasks: Optional[Backgr
         photo_filename,
         card_filename,
         embedding_blob,
+        gate_number=gate_number,
     )
     if embedding_blob:
         face_match.mark_index_dirty()
 
-    job_id = rq_queue.enqueue_registration(raw_path, original_card_filename, placeholder_nid)
+    job_id = rq_queue.enqueue_registration(raw_path, original_card_filename, placeholder_nid, gate_number)
     if job_id is None:
         if background_tasks is not None:
             background_tasks.add_task(
@@ -430,9 +444,10 @@ def _process_scan_external(image_bytes: bytes, background_tasks: Optional[Backgr
                 raw_path,
                 original_card_filename,
                 placeholder_nid,
+                gate_number,
             )
         else:
-            background_tasks_runner.register_person_job(raw_path, original_card_filename, placeholder_nid)
+            background_tasks_runner.register_person_job(raw_path, original_card_filename, placeholder_nid, gate_number)
 
     return {
         "status": "allowed",
@@ -528,7 +543,7 @@ def security_scan_base64(request: Request, payload: Base64ScanRequest, backgroun
     _require_api_key(request)
     _enforce_rate_limit(request)
     image_bytes = _decode_base64_image(payload.image_base64)
-    result = _process_scan_external(image_bytes, background_tasks)
+    result = _process_scan_external(image_bytes, background_tasks, payload.gate_number)
     if result["status"] == "error":
         return JSONResponse(result, status_code=422)
     return result
@@ -692,6 +707,27 @@ def update_person(request: Request, payload: UpdatePersonRequest):
         raise HTTPException(status_code=404, detail="الشخص غير موجود")
     face_match.mark_index_dirty()
     return {"status": "ok", "person": person}
+
+
+@app.post("/api/admin/reprocess")
+def reprocess_people(request: Request, payload: BatchRotateRequest, background_tasks: BackgroundTasks):
+    _require_admin(request)
+    if payload.direction not in {"cw", "ccw"}:
+        raise HTTPException(status_code=400, detail="اتجاه التدوير غير صالح")
+    raw_ids = [item.strip() for item in (payload.national_ids or []) if item and item.strip()]
+    if not raw_ids:
+        raise HTTPException(status_code=400, detail="لا توجد سجلات محددة")
+    if len(raw_ids) > REPROCESS_BATCH_MAX:
+        raise HTTPException(status_code=400, detail="عدد السجلات أكبر من الحد المسموح")
+
+    job_ids: list[str] = []
+    for nid in raw_ids:
+        job_id = rq_queue.enqueue_reprocess(nid, payload.direction)
+        if job_id is None:
+            background_tasks.add_task(background_tasks_runner.reprocess_person_job, nid, payload.direction)
+        else:
+            job_ids.append(job_id)
+    return {"status": "ok", "count": len(raw_ids), "jobs": job_ids}
 
 
 @app.delete("/api/admin/people/{national_id}")

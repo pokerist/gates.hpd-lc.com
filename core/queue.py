@@ -29,6 +29,7 @@ def enqueue_registration(
     raw_path: str,
     original_card_filename: Optional[str],
     placeholder_nid: Optional[str] = None,
+    gate_number: Optional[int] = None,
 ) -> Optional[str]:
     url = _redis_url()
     if not url:
@@ -41,6 +42,27 @@ def enqueue_registration(
             raw_path,
             original_card_filename,
             placeholder_nid,
+            gate_number,
+            job_timeout=_job_timeout(),
+        )
+        print(f"[RQ] Enqueued job {job.id}")
+        return job.id
+    except Exception as exc:
+        print(f"[RQ] Failed to enqueue job: {exc}")
+        return None
+
+
+def enqueue_reprocess(national_id: str, direction: str) -> Optional[str]:
+    url = _redis_url()
+    if not url:
+        return None
+    try:
+        conn = Redis.from_url(url)
+        queue = Queue(_queue_name(), connection=conn, default_timeout=_job_timeout())
+        job = queue.enqueue(
+            tasks.reprocess_person_job,
+            national_id,
+            direction,
             job_timeout=_job_timeout(),
         )
         print(f"[RQ] Enqueued job {job.id}")

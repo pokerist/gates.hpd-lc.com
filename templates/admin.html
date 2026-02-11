@@ -36,15 +36,33 @@
   <div id="manualIssuesList" class="issues-list"></div>
 </section>
 
+<section class="card batch-card" style="margin-bottom: 16px;">
+  <div class="batch-actions">
+    <label class="batch-select">
+      <input type="checkbox" id="selectAllRows" />
+      تحديد الكل
+    </label>
+    <div class="batch-buttons">
+      <button class="btn btn-outline btn-sm" id="rotateCcwBtn">لف يسار</button>
+      <button class="btn btn-outline btn-sm" id="rotateCwBtn">لف يمين</button>
+    </div>
+    <div class="batch-count">
+      المحدد: <span id="selectedCount">0</span>
+    </div>
+  </div>
+</section>
+
 <section class="card">
   <div class="table-wrap">
     <table class="table" id="peopleTable">
       <thead>
         <tr>
+          <th>تحديد</th>
           <th>الصورة</th>
           <th>البطاقة</th>
           <th>الاسم</th>
           <th>الرقم القومي</th>
+          <th>البوابة</th>
           <th>الحالة</th>
           <th>سبب الحظر</th>
           <th>مرات الدخول</th>

@@ -152,6 +152,7 @@ def _row_to_dict(row: Any) -> Dict[str, Any]:
         "created_at": _row_value(row, "created_at"),
         "last_seen_at": _row_value(row, "last_seen_at"),
         "updated_at": _row_value(row, "updated_at"),
+        "gate_number": _row_value(row, "gate_number"),
         "photo_path": _row_value(row, "photo_path"),
         "card_path": _row_value(row, "card_path"),
     }
@@ -179,6 +180,7 @@ def _init_db_sqlite() -> None:
                 created_at TEXT NOT NULL,
                 last_seen_at TEXT,
                 updated_at TEXT,
+                gate_number INTEGER,
                 photo_path TEXT,
                 card_path TEXT,
                 face_embedding BLOB
@@ -216,6 +218,7 @@ def _init_db_sqlite() -> None:
             ("docai_jpeg_quality", "85"),
         )
         _ensure_updated_at_sqlite(conn)
+        _ensure_gate_number_sqlite(conn)
 
 
 def _init_db_postgres() -> None:
@@ -231,6 +234,7 @@ def _init_db_postgres() -> None:
             created_at TIMESTAMP NOT NULL,
             last_seen_at TIMESTAMP,
             updated_at TIMESTAMP,
+            gate_number INTEGER,
             photo_path TEXT,
             card_path TEXT,
             face_embedding BYTEA
@@ -268,6 +272,7 @@ def _init_db_postgres() -> None:
         ("docai_jpeg_quality", "85"),
     )
     _ensure_updated_at_postgres()
+    _ensure_gate_number_postgres()
 
 
 def _ensure_updated_at_sqlite(conn) -> None:
@@ -293,6 +298,25 @@ def _ensure_updated_at_postgres() -> None:
     _execute("UPDATE people SET updated_at = created_at WHERE updated_at IS NULL")
 
 
+def _ensure_gate_number_sqlite(conn) -> None:
+    try:
+        columns = conn.execute("PRAGMA table_info(people);").fetchall()
+    except Exception:
+        return
+    has_gate = False
+    for col in columns:
+        name = col[1] if len(col) > 1 else None
+        if name == "gate_number":
+            has_gate = True
+            break
+    if not has_gate:
+        conn.execute("ALTER TABLE people ADD COLUMN gate_number INTEGER")
+
+
+def _ensure_gate_number_postgres() -> None:
+    _execute("ALTER TABLE people ADD COLUMN IF NOT EXISTS gate_number INTEGER")
+
+
 def get_person_by_nid(national_id: str) -> Optional[Dict[str, Any]]:
     row = _fetchone("SELECT * FROM people WHERE national_id = %s", (national_id,))
     return _row_to_dict(row) if row else None
@@ -309,6 +333,7 @@ def add_person(
     photo_path: Optional[str] = None,
     card_path: Optional[str] = None,
     face_embedding: Optional[bytes] = None,
+    gate_number: Optional[int] = None,
 ) -> Dict[str, Any]:
     now = _utcnow()
     _execute(
@@ -322,13 +347,14 @@ def add_person(
             created_at,
             last_seen_at,
             updated_at,
+            gate_number,
             photo_path,
             card_path,
             face_embedding
         )
-        VALUES (%s, %s, %s, NULL, 1, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, NULL, 1, %s, %s, %s, %s, %s, %s, %s)
         """,
-        (national_id, full_name, False, now, now, now, photo_path, card_path, face_embedding),
+        (national_id, full_name, False, now, now, now, gate_number, photo_path, card_path, face_embedding),
     )
     return get_person_by_nid(national_id)  # type: ignore[return-value]
 
@@ -371,6 +397,17 @@ def update_card_if_missing(national_id: str, card_path: Optional[str]) -> Option
     _execute(
         "UPDATE people SET card_path = COALESCE(NULLIF(card_path, ''), %s), updated_at = %s WHERE national_id = %s",
         (card_path, now, national_id),
+    )
+    return get_person_by_nid(national_id)
+
+
+def update_gate_number_if_missing(national_id: str, gate_number: Optional[int]) -> Optional[Dict[str, Any]]:
+    if gate_number is None:
+        return get_person_by_nid(national_id)
+    now = _utcnow()
+    _execute(
+        "UPDATE people SET gate_number = %s, updated_at = %s WHERE national_id = %s AND gate_number IS NULL",
+        (gate_number, now, national_id),
     )
     return get_person_by_nid(national_id)
 

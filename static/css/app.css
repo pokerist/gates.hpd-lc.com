@@ -604,6 +604,32 @@ canvas {
   color: #fde68a;
 }
 
+.batch-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.batch-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.batch-buttons {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.batch-count {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
 .action-group {
   display: inline-flex;
   gap: 8px;
