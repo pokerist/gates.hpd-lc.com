@@ -31,6 +31,7 @@ RATE_LIMIT_WINDOW_SEC = int(os.getenv("RATE_LIMIT_WINDOW_SEC", "60"))
 RATE_LIMIT_MAX = int(os.getenv("RATE_LIMIT_MAX", "20"))
 SSE_POLL_INTERVAL_SEC = float(os.getenv("SSE_POLL_INTERVAL_SEC", "2"))
 REPROCESS_BATCH_MAX = int(os.getenv("REPROCESS_BATCH_MAX", "50"))
+MANUAL_ISSUES_MAX = int(os.getenv("MANUAL_ISSUES_MAX", "2000"))
 TRUST_PROXY = os.getenv("TRUST_PROXY", "1") == "1"
 _rate_lock = Lock()
 _rate_buckets: dict[str, deque[float]] = {}
@@ -666,6 +667,38 @@ def list_people(
     people = db.search_people(q, limit=size_value, offset=offset)
     total = db.count_people(q)
     return {"items": people, "total": total, "page": page_value, "page_size": size_value}
+
+
+@app.get("/api/admin/issues")
+def list_manual_issues(
+    request: Request,
+    limit: Optional[int] = None,
+    offset: Optional[int] = None,
+):
+    _require_admin(request)
+    try:
+        limit_value = int(limit) if limit is not None else 0
+    except Exception:
+        limit_value = 0
+    try:
+        offset_value = int(offset or 0)
+    except Exception:
+        offset_value = 0
+    if limit_value > MANUAL_ISSUES_MAX:
+        limit_value = MANUAL_ISSUES_MAX
+    if limit_value < 0:
+        limit_value = 0
+    if offset_value < 0:
+        offset_value = 0
+    effective_limit = None if limit_value == 0 else limit_value
+    items = db.get_manual_issues(limit=effective_limit, offset=offset_value)
+    total = db.count_manual_issues()
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit_value,
+        "offset": offset_value,
+    }
 
 
 @app.get("/api/admin/stream")

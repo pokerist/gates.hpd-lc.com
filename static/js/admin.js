@@ -25,6 +25,12 @@ const state = {
   people: new Map(),
   peopleById: new Map(),
   lastItems: [],
+  manualIssues: [],
+  manualIssuesTotal: 0,
+  manualIssuesDirty: true,
+  manualIssuesLoaded: false,
+  manualIssuesFetching: false,
+  manualIssuesLimit: 0,
   issueIds: new Set(),
   activeEditor: null,
   selectedIds: new Set(),
@@ -225,7 +231,9 @@ async function fetchPeople({ silent = false } = {}) {
       state.activeEditor = null;
     }
     renderTable(items);
-    renderIssues(items);
+    if (state.manualIssuesDirty || !state.manualIssuesLoaded) {
+      fetchManualIssues({ silent: true });
+    }
     updateCursor(items);
     if (!state.sse) {
       startSse();
@@ -370,9 +378,28 @@ function renderTable(items) {
       const nidHint = hasValidNid
         ? "اتركه فارغ لو بدون تغيير."
         : "الرقم القومي مطلوب (14 رقم).";
+      const previewCardUrl = person.card_path ? `/card-images/${escapeAttr(person.card_path)}` : "";
+      const previewFaceUrl = person.photo_path ? `/person-photos/${escapeAttr(person.photo_path)}` : "";
+      const previewCard = previewCardUrl
+        ? `<img src="${previewCardUrl}" alt="card preview" />`
+        : `<div class="inline-card-placeholder">لا توجد صورة بطاقة</div>`;
       editorRow.innerHTML = `
         <td colspan="11">
           <div class="inline-editor">
+            <div class="inline-preview">
+              <div class="inline-card">
+                ${previewCard}
+              </div>
+              <div class="inline-preview-meta">
+                <span>الرقم القومي الحالي: ${escapeHtml(displayNidValue)}</span>
+                <span>البوابة: ${escapeHtml(displayGate)}</span>
+              </div>
+              ${previewCardUrl ? `
+                <div class="inline-preview-actions">
+                  <button class="btn btn-outline btn-sm" data-action="view-card" data-card="${previewCardUrl}" data-face="${previewFaceUrl}">عرض البطاقة كاملة</button>
+                </div>
+              ` : ""}
+            </div>
             <div class="inline-fields">
               <div>
                 <label>الاسم الكامل</label>
@@ -399,22 +426,24 @@ function renderTable(items) {
 }
 
 function buildIssueItems(items) {
-  return items.filter(needsManual).map(person => ({
+  return (items || []).map(person => ({
     id: (person.national_id || "").trim(),
     name: person.full_name || "بدون اسم",
     nid: isValidNid(person.national_id || "") ? person.national_id : "غير معروف",
     gate: person.gate_number ?? "—",
     photo: person.photo_path || "",
     card: person.card_path || ""
-  }));
+  })).filter(issue => issue.id);
 }
 
-function renderIssues(items) {
+function renderIssues(items, total) {
   if (!manualIssuesList) return;
-  const issues = buildIssueItems(items).filter(issue => issue.id);
+  const issues = buildIssueItems(items);
+  state.manualIssues = issues;
+  state.manualIssuesTotal = typeof total === "number" ? total : issues.length;
   manualIssuesList.innerHTML = "";
   if (manualIssuesCount) {
-    manualIssuesCount.textContent = String(issues.length);
+    manualIssuesCount.textContent = String(state.manualIssuesTotal);
   }
 
   if (!issues.length) {
@@ -462,6 +491,28 @@ function renderIssues(items) {
     });
   }
   state.issueIds = nextIssueIds;
+}
+
+async function fetchManualIssues({ silent = false } = {}) {
+  if (state.manualIssuesFetching) return;
+  state.manualIssuesFetching = true;
+  try {
+    const params = new URLSearchParams();
+    params.set("limit", String(state.manualIssuesLimit));
+    const url = `/api/admin/issues?${params.toString()}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    renderIssues(data.items || [], data.total || 0);
+    state.manualIssuesLoaded = true;
+    state.manualIssuesDirty = false;
+  } catch (err) {
+    console.error(err);
+    if (!silent) {
+      showToast("تعذر تحميل السجلات اليدوية", "حدث خطأ أثناء جلب السجلات المحتاجة إدخال.");
+    }
+  } finally {
+    state.manualIssuesFetching = false;
+  }
 }
 
 function showIssueToast(issue) {
@@ -540,6 +591,7 @@ async function sendReprocess(direction) {
     }
     state.selectedIds.clear();
     showToast("تم إرسال الطلب", `تم جدولة ${ids.length} سجل لإعادة المعالجة.`);
+    state.manualIssuesDirty = true;
     fetchPeople({ silent: true });
   } catch (err) {
     console.error(err);
@@ -562,12 +614,15 @@ function openEditor(nid) {
 
 function openEditorEnsureVisible(nid) {
   if (!nid) return;
-  if (searchInput.value.trim()) {
-    searchInput.value = "";
-    fetchPeople().then(() => openEditor(nid));
+  const safeId = (nid || "").trim();
+  if (!safeId) return;
+  if (!state.people.has(safeId)) {
+    searchInput.value = safeId;
+    state.page = 1;
+    fetchPeople().then(() => openEditor(safeId));
     return;
   }
-  openEditor(nid);
+  openEditor(safeId);
 }
 
 function closeEditor() {
@@ -610,6 +665,7 @@ async function deletePerson(nationalId) {
   await fetch(`/api/admin/people/${encodeURIComponent(nationalId)}`, {
     method: "DELETE"
   });
+  state.manualIssuesDirty = true;
 }
 
 async function saveInlineEdit(nid) {
@@ -669,6 +725,7 @@ async function saveInlineEdit(nid) {
     }
     statusEl.textContent = "تم الحفظ.";
     statusEl.classList.add("success");
+    state.manualIssuesDirty = true;
     closeEditor();
     fetchPeople({ silent: true });
   } catch (err) {
@@ -710,6 +767,7 @@ function startSse() {
     } catch (err) {
       console.error(err);
     }
+    state.manualIssuesDirty = true;
     if (state.activeEditor || state.fetching) {
       state.pendingRefresh = true;
       updateLiveStatus();

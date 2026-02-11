@@ -740,11 +740,54 @@ canvas {
 
 .inline-editor {
   display: grid;
-  gap: 12px;
+  grid-template-columns: minmax(220px, 360px) 1fr;
+  gap: 16px;
   padding: 14px;
   border-radius: 14px;
   border: 1px solid var(--border);
   background: rgba(2, 6, 23, 0.6);
+}
+
+.inline-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.inline-card {
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(2, 6, 23, 0.75);
+  overflow: hidden;
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.inline-card img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.inline-card-placeholder {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 12px;
+  text-align: center;
+}
+
+.inline-preview-meta {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.inline-preview-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .inline-fields {
@@ -774,6 +817,7 @@ canvas {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  grid-column: 1 / -1;
 }
 
 .inline-status {
@@ -787,6 +831,12 @@ canvas {
 
 .inline-status.success {
   color: #bbf7d0;
+}
+
+@media (max-width: 900px) {
+  .inline-editor {
+    grid-template-columns: 1fr;
+  }
 }
 
 .toast-container {

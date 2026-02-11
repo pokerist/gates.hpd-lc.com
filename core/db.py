@@ -503,6 +503,53 @@ def count_people(query: Optional[str] = None) -> int:
     return int(_row_value(row, "total", 0) or 0)
 
 
+def count_manual_issues() -> int:
+    if DB_BACKEND == "postgres":
+        row = _fetchone(
+            """
+            SELECT COUNT(*) AS total
+            FROM people
+            WHERE (full_name IS NULL OR BTRIM(full_name) = '')
+               OR (national_id IS NULL OR BTRIM(national_id) = '' OR national_id !~ '^[0-9]{14}$')
+            """
+        )
+    else:
+        row = _fetchone(
+            """
+            SELECT COUNT(*) AS total
+            FROM people
+            WHERE (full_name IS NULL OR TRIM(full_name) = '')
+               OR (national_id IS NULL OR TRIM(national_id) = '' OR LENGTH(TRIM(national_id)) != 14 OR TRIM(national_id) GLOB '*[^0-9]*')
+            """
+        )
+    return int(_row_value(row, "total", 0) or 0)
+
+
+def get_manual_issues(limit: Optional[int] = 200, offset: int = 0) -> List[Dict[str, Any]]:
+    params: List[Any] = []
+    if DB_BACKEND == "postgres":
+        where = (
+            "(full_name IS NULL OR BTRIM(full_name) = '')"
+            " OR (national_id IS NULL OR BTRIM(national_id) = '' OR national_id !~ '^[0-9]{14}$')"
+        )
+        order = "ORDER BY COALESCE(updated_at, created_at) DESC, id DESC"
+    else:
+        where = (
+            "(full_name IS NULL OR TRIM(full_name) = '')"
+            " OR (national_id IS NULL OR TRIM(national_id) = '' OR LENGTH(TRIM(national_id)) != 14 OR TRIM(national_id) GLOB '*[^0-9]*')"
+        )
+        order = "ORDER BY COALESCE(updated_at, created_at) DESC, id DESC"
+
+    if limit is None:
+        query = f"SELECT * FROM people WHERE {where} {order}"
+        rows = _fetchall(query)
+    else:
+        query = f"SELECT * FROM people WHERE {where} {order} LIMIT %s OFFSET %s"
+        params = [limit, max(int(offset), 0)]
+        rows = _fetchall(query, params)
+    return [_row_to_dict(row) for row in rows]
+
+
 def get_people_updated_since(
     cursor_ts: Optional[str],
     cursor_id: int = 0,
