@@ -198,6 +198,35 @@ def _require_debug_access(request: Request) -> None:
         raise HTTPException(status_code=403, detail="الرمز غير صحيح أو غير مفعل")
 
 
+def _error_payload(
+    message: str,
+    code: str,
+    hint: Optional[str] = None,
+    ocr: Optional[dict] = None,
+    timings: Optional[dict] = None,
+) -> dict:
+    payload = {"status": "error", "message": message, "error_code": code}
+    if hint:
+        payload["hint"] = hint
+    if ocr is not None:
+        payload["ocr"] = ocr
+    if timings is not None:
+        payload["timings"] = timings
+    return payload
+
+
+def _map_scan_error(message: str) -> tuple[str, str]:
+    if "بطاقة" in message:
+        return (
+            "card_not_found",
+            "تأكد أن البطاقة كلها داخل الصورة، بدون قصّ، وبدون ميل شديد.",
+        )
+    return (
+        "scan_failed",
+        "حاول تصوير البطاقة في إضاءة جيدة وبدون اهتزاز.",
+    )
+
+
 def _detect_face_embedding(scan) -> Optional[object]:
     if scan is None or scan.photo_image is None:
         return None
@@ -216,11 +245,15 @@ def _process_scan(image_bytes: bytes) -> dict:
     original_card_filename = media.save_original_card_image(image_bytes)
     scan = run_security_scan(image_bytes)
     if scan.error:
+        code, hint = _map_scan_error(scan.error)
         return {
-            "status": "error",
-            "message": scan.error,
-            "ocr": {"full_name": "", "national_id": ""},
-            "timings": scan.timings,
+            **_error_payload(
+                scan.error,
+                code=code,
+                hint=hint,
+                ocr={"full_name": "", "national_id": ""},
+                timings=scan.timings,
+            )
         }
     ocr = scan.ocr
     national_id = (ocr.national_id or "").strip()
@@ -230,30 +263,32 @@ def _process_scan(image_bytes: bytes) -> dict:
     photo_available = scan.photo_image is not None
 
     if not photo_available:
-        return {
-            "status": "error",
-            "message": "لم يتم استخراج صورة واضحة من البطاقة",
-            "ocr": {"full_name": full_name, "national_id": national_id},
-            "timings": scan.timings,
-        }
+        return _error_payload(
+            "لم يتم استخراج صورة واضحة من البطاقة",
+            code="face_crop_missing",
+            hint="الصورة المقصوصة للوجه غير واضحة. حاول تقريب البطاقة وتجنب الانعكاس.",
+            ocr={"full_name": full_name, "national_id": national_id},
+            timings=scan.timings,
+        )
     if _detect_face_embedding(scan) is None:
-        return {
-            "status": "error",
-            "message": "لم يتم اكتشاف وجه واضح في صورة البطاقة",
-            "ocr": {"full_name": full_name, "national_id": national_id},
-            "timings": scan.timings,
-        }
+        return _error_payload(
+            "لم يتم اكتشاف وجه واضح في صورة البطاقة",
+            code="face_not_detected",
+            hint="تأكد أن وجه صاحب البطاقة ظاهر بالكامل وبوضوح بدون انعكاس أو قصّ.",
+            ocr={"full_name": full_name, "national_id": national_id},
+            timings=scan.timings,
+        )
 
     if face_match_info and face_match_info.get("matched"):
         matched_person = face_match_info.get("person") or {}
         nid = matched_person.get("national_id") or national_id
         if not nid:
-            return {
-                "status": "error",
-                "message": "تعذر تحديد الرقم القومي",
-                "ocr": {"full_name": full_name, "national_id": national_id},
-                "match": face_match_info,
-            }
+            return _error_payload(
+                "تعذر تحديد الرقم القومي",
+                code="nid_missing_after_match",
+                hint="تم التعرف على الوجه لكن السجل لا يحتوي رقم قومي واضح. راجع الإدخال اليدوي.",
+                ocr={"full_name": full_name, "national_id": national_id},
+            )
 
         photo_filename = None
         card_filename = original_card_filename
@@ -297,12 +332,12 @@ def _process_scan(image_bytes: bytes) -> dict:
 
     if not national_id:
         if not full_name:
-            return {
-                "status": "error",
-                "message": "لم يتم استخراج اسم أو رقم قومي",
-                "ocr": {"full_name": full_name, "national_id": national_id},
-                "source": "ocr",
-            }
+            return _error_payload(
+                "لم يتم استخراج اسم أو رقم قومي",
+                code="ocr_empty",
+                hint="حاول تثبيت الكاميرا والتأكد من وضوح النص بالكامل داخل الإطار.",
+                ocr={"full_name": full_name, "national_id": national_id},
+            )
         national_id = media.generate_temp_nid()
 
     person = db.get_person_by_nid(national_id)
@@ -382,27 +417,31 @@ def _process_scan_external(
     original_card_filename = media.save_original_card_image(image_bytes)
     scan = run_face_match_scan(image_bytes)
     if scan.error:
+        code, hint = _map_scan_error(scan.error)
         _cleanup_raw_file(raw_path)
         _cleanup_card_file(original_card_filename)
-        return {
-            "status": "error",
-            "message": scan.error,
-            "timings": scan.timings,
-        }
+        return _error_payload(
+            scan.error,
+            code=code,
+            hint=hint,
+            timings=scan.timings,
+        )
     if scan.photo_image is None:
         _cleanup_raw_file(raw_path)
         _cleanup_card_file(original_card_filename)
-        return {
-            "status": "error",
-            "message": "لم يتم استخراج صورة واضحة من البطاقة",
-        }
+        return _error_payload(
+            "لم يتم استخراج صورة واضحة من البطاقة",
+            code="face_crop_missing",
+            hint="الصورة المقصوصة للوجه غير واضحة. حاول تقريب البطاقة وتجنب الانعكاس.",
+        )
     if _detect_face_embedding(scan) is None:
         _cleanup_raw_file(raw_path)
         _cleanup_card_file(original_card_filename)
-        return {
-            "status": "error",
-            "message": "لم يتم اكتشاف وجه واضح في صورة البطاقة",
-        }
+        return _error_payload(
+            "لم يتم اكتشاف وجه واضح في صورة البطاقة",
+            code="face_not_detected",
+            hint="تأكد أن وجه صاحب البطاقة ظاهر بالكامل وبوضوح بدون انعكاس أو قصّ.",
+        )
 
     match_info = scan.face_match
     if match_info and match_info.get("matched"):
@@ -411,10 +450,11 @@ def _process_scan_external(
         if not nid:
             _cleanup_raw_file(raw_path)
             _cleanup_card_file(original_card_filename)
-            return {
-                "status": "error",
-                "message": "تعذر تحديد الرقم القومي",
-            }
+            return _error_payload(
+                "تعذر تحديد الرقم القومي",
+                code="nid_missing_after_match",
+                hint="تم التعرف على الوجه لكن السجل لا يحتوي رقم قومي واضح. راجع الإدخال اليدوي.",
+            )
 
         photo_filename = media.save_person_photo(scan.photo_image, nid)
         card_filename = original_card_filename
