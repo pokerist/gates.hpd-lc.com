@@ -510,17 +510,19 @@ def count_manual_issues() -> int:
             SELECT COUNT(*) AS total
             FROM people
             WHERE (full_name IS NULL OR BTRIM(full_name) = '')
-               OR (national_id IS NULL OR BTRIM(national_id) = '' OR national_id !~ '^[0-9]{14}$')
+               OR (national_id IS NULL OR BTRIM(national_id) = '' OR NOT (BTRIM(national_id) ~ '^[0-9]{14}$'))
             """
         )
     else:
+        pattern = "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]"
         row = _fetchone(
             """
             SELECT COUNT(*) AS total
             FROM people
             WHERE (full_name IS NULL OR TRIM(full_name) = '')
-               OR (national_id IS NULL OR TRIM(national_id) = '' OR LENGTH(TRIM(national_id)) != 14 OR TRIM(national_id) GLOB '*[^0-9]*')
-            """
+               OR (national_id IS NULL OR TRIM(national_id) = '' OR NOT (TRIM(national_id) GLOB ?))
+            """,
+            (pattern,),
         )
     return int(_row_value(row, "total", 0) or 0)
 
@@ -530,23 +532,30 @@ def get_manual_issues(limit: Optional[int] = 200, offset: int = 0) -> List[Dict[
     if DB_BACKEND == "postgres":
         where = (
             "(full_name IS NULL OR BTRIM(full_name) = '')"
-            " OR (national_id IS NULL OR BTRIM(national_id) = '' OR national_id !~ '^[0-9]{14}$')"
+            " OR (national_id IS NULL OR BTRIM(national_id) = '' OR NOT (BTRIM(national_id) ~ '^[0-9]{14}$'))"
         )
         order = "ORDER BY COALESCE(updated_at, created_at) DESC, id DESC"
     else:
+        pattern = "[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]"
         where = (
             "(full_name IS NULL OR TRIM(full_name) = '')"
-            " OR (national_id IS NULL OR TRIM(national_id) = '' OR LENGTH(TRIM(national_id)) != 14 OR TRIM(national_id) GLOB '*[^0-9]*')"
+            " OR (national_id IS NULL OR TRIM(national_id) = '' OR NOT (TRIM(national_id) GLOB ?))"
         )
         order = "ORDER BY COALESCE(updated_at, created_at) DESC, id DESC"
 
     if limit is None:
         query = f"SELECT * FROM people WHERE {where} {order}"
-        rows = _fetchall(query)
+        if DB_BACKEND == "postgres":
+            rows = _fetchall(query)
+        else:
+            rows = _fetchall(query, (pattern,))
     else:
         query = f"SELECT * FROM people WHERE {where} {order} LIMIT %s OFFSET %s"
         params = [limit, max(int(offset), 0)]
-        rows = _fetchall(query, params)
+        if DB_BACKEND == "postgres":
+            rows = _fetchall(query, params)
+        else:
+            rows = _fetchall(query, (pattern, *params))
     return [_row_to_dict(row) for row in rows]
 
 

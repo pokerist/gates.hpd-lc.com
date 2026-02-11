@@ -40,11 +40,15 @@ const state = {
   cursorId: null,
   sse: null,
   sseConnected: false,
+  lastSseAt: 0,
   hasInitialLoad: false,
   page: 1,
   pageSize: 25,
   total: 0
 };
+
+const FALLBACK_POLL_MS = 4000;
+const SSE_STALE_MS = 12000;
 
 if (pageSizeSelect) {
   const parsed = parseInt(pageSizeSelect.value, 10);
@@ -764,6 +768,7 @@ function startSse() {
 
   source.addEventListener("open", () => {
     state.sseConnected = true;
+    state.lastSseAt = Date.now();
     updateLiveStatus();
   });
 
@@ -774,11 +779,13 @@ function startSse() {
 
   source.addEventListener("heartbeat", () => {
     state.sseConnected = true;
+    state.lastSseAt = Date.now();
     updateLiveStatus();
   });
 
   source.addEventListener("changed", (event) => {
     state.sseConnected = true;
+    state.lastSseAt = Date.now();
     try {
       const payload = JSON.parse(event.data || "{}");
       if (payload.cursor_ts) state.cursorTs = payload.cursor_ts;
@@ -970,6 +977,16 @@ previewClose?.addEventListener("click", closeCardPreview);
 previewBackdrop?.addEventListener("click", closeCardPreview);
 
 fetchPeople();
+
+setInterval(() => {
+  const now = Date.now();
+  const stale = state.lastSseAt && now - state.lastSseAt > SSE_STALE_MS;
+  if (!state.sseConnected || stale) {
+    if (!state.activeEditor && !state.fetching) {
+      fetchPeople({ silent: true });
+    }
+  }
+}, FALLBACK_POLL_MS);
 
 function formatDate(value) {
   if (!value) return "—";
