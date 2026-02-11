@@ -241,6 +241,26 @@ def _detect_face_embedding(scan) -> Optional[object]:
     return embedding
 
 
+def _allow_or_block_matched_person(person: dict, source: str, ocr: Optional[dict] = None) -> dict:
+    blocked = bool(person.get("blocked"))
+    if blocked:
+        return {
+            "status": "blocked",
+            "message": "هذا الشخص محظور من الدخول",
+            "reason": person.get("block_reason") or "غير محدد",
+            "person": person,
+            "ocr": ocr or {"full_name": "", "national_id": ""},
+            "source": source,
+        }
+    return {
+        "status": "allowed",
+        "message": "مسموح بالدخول",
+        "person": person,
+        "ocr": ocr or {"full_name": "", "national_id": ""},
+        "source": source,
+    }
+
+
 def _process_scan(image_bytes: bytes) -> dict:
     original_card_filename = media.save_original_card_image(image_bytes)
     scan = run_security_scan(image_bytes)
@@ -283,10 +303,9 @@ def _process_scan(image_bytes: bytes) -> dict:
         matched_person = face_match_info.get("person") or {}
         nid = matched_person.get("national_id") or national_id
         if not nid:
-            return _error_payload(
-                "تعذر تحديد الرقم القومي",
-                code="nid_missing_after_match",
-                hint="تم التعرف على الوجه لكن السجل لا يحتوي رقم قومي واضح. راجع الإدخال اليدوي.",
+            return _allow_or_block_matched_person(
+                matched_person,
+                source="face_match",
                 ocr={"full_name": full_name, "national_id": national_id},
             )
 
@@ -332,6 +351,13 @@ def _process_scan(image_bytes: bytes) -> dict:
 
     if not national_id:
         if not full_name:
+            if face_match_info and face_match_info.get("matched"):
+                matched_person = face_match_info.get("person") or {}
+                return _allow_or_block_matched_person(
+                    matched_person,
+                    source="face_match",
+                    ocr={"full_name": full_name, "national_id": national_id},
+                )
             return _error_payload(
                 "لم يتم استخراج اسم أو رقم قومي",
                 code="ocr_empty",
@@ -450,11 +476,10 @@ def _process_scan_external(
         if not nid:
             _cleanup_raw_file(raw_path)
             _cleanup_card_file(original_card_filename)
-            return _error_payload(
-                "تعذر تحديد الرقم القومي",
-                code="nid_missing_after_match",
-                hint="تم التعرف على الوجه لكن السجل لا يحتوي رقم قومي واضح. راجع الإدخال اليدوي.",
-            )
+            payload = _allow_or_block_matched_person(person, source="face_match")
+            payload.pop("ocr", None)
+            payload["is_new"] = False
+            return payload
 
         photo_filename = media.save_person_photo(scan.photo_image, nid)
         card_filename = original_card_filename
