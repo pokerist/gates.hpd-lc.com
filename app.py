@@ -32,6 +32,7 @@ RATE_LIMIT_MAX = int(os.getenv("RATE_LIMIT_MAX", "20"))
 SSE_POLL_INTERVAL_SEC = float(os.getenv("SSE_POLL_INTERVAL_SEC", "2"))
 REPROCESS_BATCH_MAX = int(os.getenv("REPROCESS_BATCH_MAX", "50"))
 MANUAL_ISSUES_MAX = int(os.getenv("MANUAL_ISSUES_MAX", "2000"))
+KEEP_FAILED_UPLOADS = os.getenv("KEEP_FAILED_UPLOADS", "0") == "1"
 TRUST_PROXY = os.getenv("TRUST_PROXY", "1") == "1"
 _rate_lock = Lock()
 _rate_buckets: dict[str, deque[float]] = {}
@@ -158,6 +159,24 @@ def _cleanup_card_file(card_filename: Optional[str]) -> None:
         (CARD_DIR / card_filename).unlink()
     except Exception:
         pass
+
+
+def _failed_debug_files(raw_path: Optional[str], card_filename: Optional[str]) -> Optional[dict]:
+    if not KEEP_FAILED_UPLOADS:
+        return None
+    payload: dict[str, str] = {}
+    if raw_path:
+        payload["raw_file"] = Path(raw_path).name
+    if card_filename:
+        payload["card_file"] = card_filename
+    return payload or None
+
+
+def _cleanup_failed_files(raw_path: Optional[str], card_filename: Optional[str]) -> None:
+    if KEEP_FAILED_UPLOADS:
+        return
+    _cleanup_raw_file(raw_path)
+    _cleanup_card_file(card_filename)
 
 
 def _client_ip(request: Request) -> str:
@@ -444,41 +463,52 @@ def _process_scan_external(
     scan = run_face_match_scan(image_bytes)
     if scan.error:
         code, hint = _map_scan_error(scan.error)
-        _cleanup_raw_file(raw_path)
-        _cleanup_card_file(original_card_filename)
-        return _error_payload(
+        _cleanup_failed_files(raw_path, original_card_filename)
+        payload = _error_payload(
             scan.error,
             code=code,
             hint=hint,
             timings=scan.timings,
         )
+        debug_files = _failed_debug_files(raw_path, original_card_filename)
+        if debug_files:
+            payload["debug_files"] = debug_files
+        return payload
     if scan.photo_image is None:
-        _cleanup_raw_file(raw_path)
-        _cleanup_card_file(original_card_filename)
-        return _error_payload(
+        _cleanup_failed_files(raw_path, original_card_filename)
+        payload = _error_payload(
             "لم يتم استخراج صورة واضحة من البطاقة",
             code="face_crop_missing",
             hint="الصورة المقصوصة للوجه غير واضحة. حاول تقريب البطاقة وتجنب الانعكاس.",
         )
+        debug_files = _failed_debug_files(raw_path, original_card_filename)
+        if debug_files:
+            payload["debug_files"] = debug_files
+        return payload
     if _detect_face_embedding(scan) is None:
-        _cleanup_raw_file(raw_path)
-        _cleanup_card_file(original_card_filename)
-        return _error_payload(
+        _cleanup_failed_files(raw_path, original_card_filename)
+        payload = _error_payload(
             "لم يتم اكتشاف وجه واضح في صورة البطاقة",
             code="face_not_detected",
             hint="تأكد أن وجه صاحب البطاقة ظاهر بالكامل وبوضوح بدون انعكاس أو قصّ.",
         )
+        debug_files = _failed_debug_files(raw_path, original_card_filename)
+        if debug_files:
+            payload["debug_files"] = debug_files
+        return payload
 
     match_info = scan.face_match
     if match_info and match_info.get("matched"):
         person = match_info.get("person") or {}
         nid = person.get("national_id") or ""
         if not nid:
-            _cleanup_raw_file(raw_path)
-            _cleanup_card_file(original_card_filename)
+            _cleanup_failed_files(raw_path, original_card_filename)
             payload = _allow_or_block_matched_person(person, source="face_match")
             payload.pop("ocr", None)
             payload["is_new"] = False
+            debug_files = _failed_debug_files(raw_path, original_card_filename)
+            if debug_files:
+                payload["debug_files"] = debug_files
             return payload
 
         photo_filename = media.save_person_photo(scan.photo_image, nid)
