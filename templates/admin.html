@@ -53,6 +53,19 @@
 </section>
 
 <section class="card">
+  <div class="pagination" style="margin-bottom: 12px;">
+    <button class="btn btn-outline btn-sm" id="pagePrevBtn">السابق</button>
+    <span id="pageInfo">صفحة 1 من 1</span>
+    <label class="page-size">
+      حجم الصفحة
+      <select id="pageSizeSelect">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+    </label>
+    <button class="btn btn-outline btn-sm" id="pageNextBtn">التالي</button>
+  </div>
   <div class="table-wrap">
     <table class="table" id="peopleTable">
       <thead>
@@ -72,19 +85,6 @@
       </thead>
       <tbody></tbody>
     </table>
-  </div>
-  <div class="pagination">
-    <button class="btn btn-outline btn-sm" id="pagePrevBtn">السابق</button>
-    <span id="pageInfo">صفحة 1 من 1</span>
-    <label class="page-size">
-      حجم الصفحة
-      <select id="pageSizeSelect">
-        <option value="25">25</option>
-        <option value="50" selected>50</option>
-        <option value="100">100</option>
-      </select>
-    </label>
-    <button class="btn btn-outline btn-sm" id="pageNextBtn">التالي</button>
   </div>
 </section>
 

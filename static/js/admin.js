@@ -121,9 +121,26 @@ function syncSelection(items) {
     }
   }
   if (selectAllRows) {
-    selectAllRows.checked = items.length > 0 && items.every(item => state.selectedIds.has(item.national_id));
-    selectAllRows.indeterminate = items.some(item => state.selectedIds.has(item.national_id)) && !selectAllRows.checked;
+    const allSelected = items.length > 0 && items.every(item => {
+      const nid = (item.national_id || "").trim();
+      return nid && state.selectedIds.has(nid);
+    });
+    const anySelected = items.some(item => {
+      const nid = (item.national_id || "").trim();
+      return nid && state.selectedIds.has(nid);
+    });
+    selectAllRows.checked = allSelected;
+    selectAllRows.indeterminate = anySelected && !allSelected;
   }
+  updateSelectedCount();
+}
+
+function applySelectionToDom() {
+  const checkboxes = document.querySelectorAll('input[data-action="select-row"]');
+  checkboxes.forEach(cb => {
+    const nid = (cb.getAttribute("data-nid") || "").trim();
+    cb.checked = nid && state.selectedIds.has(nid);
+  });
   updateSelectedCount();
 }
 
@@ -151,6 +168,9 @@ function updatePagination(total) {
   if (state.page > totalPages) {
     state.page = totalPages;
     state.pendingRefresh = true;
+  }
+  if (state.page < 1) {
+    state.page = 1;
   }
   if (pageInfo) {
     pageInfo.textContent = `صفحة ${state.page} من ${totalPages} • ${state.total} سجل`;
@@ -358,13 +378,17 @@ function renderTable(items) {
       tableBody.appendChild(editorRow);
     }
   });
+  applySelectionToDom();
 }
 
 function buildIssueItems(items) {
   return items.filter(needsManual).map(person => ({
     id: (person.national_id || "").trim(),
     name: person.full_name || "بدون اسم",
-    nid: isValidNid(person.national_id || "") ? person.national_id : "غير معروف"
+    nid: isValidNid(person.national_id || "") ? person.national_id : "غير معروف",
+    gate: person.gate_number ?? "—",
+    photo: person.photo_path || "",
+    card: person.card_path || ""
   }));
 }
 
@@ -377,15 +401,34 @@ function renderIssues(items) {
   }
 
   if (!issues.length) {
-    manualIssuesList.innerHTML = `<div class="issue-item"><div class="issue-main"><div class="issue-title">لا توجد سجلات تحتاج إدخال يدوي حالياً.</div></div></div>`;
+    manualIssuesList.innerHTML = `
+      <div class="issue-item">
+        <div class="issue-thumb">—</div>
+        <div class="issue-main">
+          <div class="issue-title">لا توجد سجلات تحتاج إدخال يدوي حالياً.</div>
+        </div>
+      </div>
+    `;
   } else {
     issues.forEach(issue => {
       const item = document.createElement("div");
       item.className = "issue-item";
+      const thumb = issue.photo
+        ? `<img src="/person-photos/${escapeAttr(issue.photo)}" alt="photo" />`
+        : issue.card
+          ? `<img src="/card-images/${escapeAttr(issue.card)}" alt="card" />`
+          : "—";
       item.innerHTML = `
+        <div class="issue-thumb">${thumb}</div>
         <div class="issue-main">
           <div class="issue-title">${escapeHtml(issue.name)}</div>
-          <div class="issue-meta">الرقم القومي: ${escapeHtml(issue.nid)}</div>
+          <div class="issue-meta">
+            <span>الرقم القومي: ${escapeHtml(issue.nid)}</span>
+            <span>البوابة: ${escapeHtml(issue.gate)}</span>
+          </div>
+          <div class="issue-badges">
+            <span class="badge warning">يحتاج إدخال يدوي</span>
+          </div>
         </div>
         <button class="btn btn-outline btn-sm" data-action="manual" data-nid="${escapeAttr(issue.id || "")}">فتح الإدخال</button>
       `;
@@ -738,7 +781,8 @@ selectAllRows?.addEventListener("change", () => {
   } else {
     state.selectedIds.clear();
   }
-  renderTable(state.lastItems);
+  applySelectionToDom();
+  syncSelection(state.lastItems);
 });
 
 rotateCcwBtn?.addEventListener("click", () => sendReprocess("ccw"));
